@@ -13,7 +13,7 @@ the start-up notification, on the web page, and in the binary
 ## 0.9.2-beta
 
 - **Rumble probe (experiment)**, a button on each player card. Games' rumble still reaches no pad: the console offers no documented way for the owner of a virtual pad to learn what a game asks of it. libScePad does export an undocumented `scePadVirtualDeviceGetRemoteSetting`, which is what Remote Play would need for exactly this. The probe calls it ten times a second for 90 s (with a large zeroed buffer in every argument, since its arguments are unknown) and logs its result and every change in what it writes. Play a rumbling part of a game with the probe running and send the log; if the game's rumble shows up in it, the next build will drive the pads with it.
-- Supported firmwares: 4.00 up to 13.60 (tested on 11.60 and 13.60; the tile only up to 13.4x).
+- Supported firmwares: 4.XX to 13.60, tested on 11.60 and 13.60 (the tile only up to 13.4x).
 
 ## 0.9.1-beta
 
