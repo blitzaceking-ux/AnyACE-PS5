@@ -14,7 +14,7 @@ sinfiltros, rebuilt with a pairing picker, a new web menu, remapping,
 settings, wired USB pads of every kind, and many fixes verified on real
 consoles. See [CHANGELOG.md](CHANGELOG.md) for everything that changed.
 
-**Firmware:** 11.60 up to 13.60 (tested on both). **Status:** beta.
+**Firmware:** 4.00 up to 13.60 (tested on 11.60 and 13.60; reported working from 4.00). **Status:** beta.
 
 ## What works
 
