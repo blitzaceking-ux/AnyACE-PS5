@@ -195,17 +195,18 @@ The code is plain C11. `src/host.c` and `src/le.c` are the Bluetooth stack
 the wired ones, `src/ps5_vpad.c` the virtual DualSense, `src/web.c` and
 `web/index.html` the menu. Every parser is fuzzed under the sanitizers.
 
-## Credits and license
+## Author and license
 
-- [AnyPad-PS5](https://github.com/sinfiltros/AnyPad-PS5) by sinfiltros: the
-  project this is built on, and the Bluetooth stack.
-- [FGG-XSense](https://github.com/FGGstore/FGG-XSense) by FGG STORE: the
-  wired Xbox (GIP) support began as a port of it.
-- [OmniPad-PS5](https://github.com/diegobarbosaa/OmniPad-PS5) by Diego
-  Lima: pointed the way to the wired pads worth supporting and the 2.4 GHz
-  dongles' wake-up.
-- Nicolas8aa, for finding why payloads did not start on firmware 13.60.
-- The Linux kernel's xpad, hid-sony and hid-nintendo drivers, for the
-  protocol details of the wired pads.
+AnyACE is made and maintained by **Ace** ([blitzaceking-ux](https://github.com/blitzaceking-ux)):
+the AnyACE menu and its design, the pairing picker and DualSense protection,
+remapping, settings, battery, the wired USB controllers, the firmware 13.60
+work, and the testing on real consoles.
 
-GPL-3.0-or-later. See [LICENSE](LICENSE).
+It started from [AnyPad-PS5](https://github.com/sinfiltros/AnyPad-PS5) by
+sinfiltros, whose Bluetooth stack it still uses, and it keeps the
+attributions the GPL asks for: the wired Xbox (GIP) code began as a port of
+[FGG-XSense](https://github.com/FGGstore/FGG-XSense) by FGG STORE, the 13.60
+start-up cause was found by Nicolas8aa, and the wired pads' protocol details
+follow the Linux kernel's xpad, hid-sony and hid-nintendo drivers.
+
+License: GPL-3.0-or-later. See [LICENSE](LICENSE).
