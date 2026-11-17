@@ -53,6 +53,7 @@ typedef struct {
     uint16_t vid, pid;
     const char *profile;
     unsigned char addr[6];
+    char name[64];                  /* the pad's own name, "" unknown */
 } pad_info;
 
 static inline void pad_state_reset(pad_state *s)

@@ -15,7 +15,9 @@ typedef struct {
     uint8_t addr[6];            /* identity address, public */
     int use_rpa;                /* advertise resolvable private addresses */
     uint8_t irk[16];            /* as handed out: least significant byte first */
-    int sc;                     /* the pad can do LE Secure Connections */
+    int sc;
+    int battery;                /* the Battery Service's level, -1: no such service */
+    int refuse_connects;        /* Create Connection says "disallowed" (0x0c) until a cancel */                     /* the pad can do LE Secure Connections */
     uint16_t vid, pid;
     int no_pnp;                 /* no PnP ID characteristic */
     uint8_t map[600];           /* report map */
@@ -45,6 +47,8 @@ int  sim_le_encrypted(const sim_le_t *s);
 int  sim_le_outputs(const sim_le_t *s);
 int  sim_le_last_output(const sim_le_t *s, uint8_t *out, int max);
 int  sim_le_blob_reads(const sim_le_t *s);
+int  sim_le_param_replies(const sim_le_t *s);
+int  sim_le_cancels(const sim_le_t *s);         /* Create Connection Cancel commands seen */   /* answers to its connection parameter requests */
 const char *sim_le_error(const sim_le_t *s);    /* what the pad found wrong */
 
 #endif

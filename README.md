@@ -1,313 +1,211 @@
-<p align="center"><img src="assets/logo.png" width="180" alt="AnyPad PS5"></p>
+<p align="center"><img src="assets/logo.png" width="180" alt="AnyACE"></p>
 
-# AnyPad PS5 — Free your PS5 from the DualSense
-# AnyPad PS5 — Libera tu PS5 del DualSense
+# AnyACE — any controller on a jailbroken PS5
 
-**[English](#english) · [Español](#español)**
+AnyACE is a resident payload for a jailbroken PS5 that lets you play with
+controllers the console does not accept on its own: DualShock 4, Xbox
+(wired or Bluetooth), Nintendo Switch Pro, 8BitDo, and most other Bluetooth
+or USB game pads. It drives the console's own Bluetooth chip and USB ports,
+and presents every pad to the system and to games as a **virtual
+DualSense**. No dongle, no game patches, no firmware changes.
 
----
+It is a fork of [AnyPad-PS5](https://github.com/sinfiltros/AnyPad-PS5) by
+sinfiltros, rebuilt with a pairing picker, a new web menu, remapping,
+settings, wired USB pads of every kind, and many fixes verified on real
+consoles. See [CHANGELOG.md](CHANGELOG.md) for everything that changed.
 
-<a name="english"></a>
-# 🇬🇧 English
+**Firmware:** 11.60 up to 13.60 (tested on both). **Status:** beta.
 
-> ## ⚠️ KNOWN ISSUE: it can break the console's own DualSense
-> While AnyPad is searching/pairing, it may detect the console's **own DualSense** and pair it by mistake. The DualSense then stops working normally with the console.
-> **Until this is fixed: keep your DualSense switched OFF while you pair other controllers.**
-> If it happens: reset the DualSense (small hole on the back, next to L2, hold ~5 s with a paperclip) and connect it to the console with the USB-C cable.
+## What works
 
-> ## ⚠️ MANDATORY: create a NEW console user
-> **AnyPad PS5 does not work if the controller is assigned to the same user as your DualSense.**
-> You must **create a new user on the PS5** and assign the controller to that user when the console
-> asks. Play with your main user and **press the PS button briefly**: the created user's pad is then
-> the one used in the game. If the pad stays on the DualSense's user, it only works in the console
-> menus and games and emulators will not see it. Details [below](#important-use-a-second-console-user).
+- **Bluetooth pads:** DualShock 4 (verified), 8BitDo SN30 Pro in Xbox and
+  Switch modes (verified), ASUS ROG Raikiri Pro (verified), Switch Pro,
+  Xbox One/Series over Bluetooth, DualSense, and any other Bluetooth HID
+  gamepad through its own descriptor. [COMPATIBILITY.md](COMPATIBILITY.md)
+  lists them one by one.
+- **Wired pads on the console's USB ports**, picked up by themselves:
+  Xbox One / Series pads and clones (verified), Xbox 360 pads and the 2.4 GHz
+  dongles that imitate one, the Xbox 360 wireless receiver, DualShock 4 and
+  DualShock 3, Switch Pro over USB, and any other USB HID gamepad.
+- **Up to 8 pads:** four Bluetooth (P1–P4) and four wired (P5–P8).
+- **A web menu** on your phone or the console's browser: pair, see every
+  pad live, test buttons, remap buttons, test rumble, settings, the log.
+- **Remapping per pad**, saved on the console and applied every time that
+  pad connects.
+- **Battery level** for pads that report it.
+- **Your DualSense is protected:** AnyACE never pairs a pad by itself, and
+  refuses a DualSense unless you insist.
 
-> **ALPHA.** Verified on a real PS5 (fat, firmware 10.01) with a **DualShock 4**.
-> Controllers from other consoles and brands (Xbox, Nintendo Switch, 8BitDo and more) are
-> supported so you can use them on the PS5, but they have not been tested on a console yet. See
-> [COMPATIBILITY.md](COMPATIBILITY.md).
+## What does not work yet
 
-## A "jailbreak" for the PS5 controller
+- **Rumble from games.** Every pad can be rumbled from the menu (Test
+  rumble), but the console offers no documented way for a virtual pad to
+  receive what a game asks of it. An experiment is under way (the *Probe
+  rumble* button); see the changelog.
+- **Firmware 13.60:** the Media-row tile cannot be installed (the system
+  call is gone), so open the menu from a browser; and the Bluetooth chip
+  reports no Bluetooth LE advertisements there, so LE pads (Xbox Series over
+  Bluetooth, some pads' Bluetooth mode) cannot be paired on 13.60. Classic
+  Bluetooth pads and wired pads work.
+- Motion and touchpad are passed only for pads that have them (DualShock 4,
+  Switch Pro).
 
-A PS5 only accepts its own DualSense (and a few licensed pads). AnyPad PS5 is a
-**controller jailbreak**: a resident payload for a jailbroken PS5 that connects other
-Bluetooth controllers through the console's own Bluetooth chip and shows them to
-the system and to games as **virtual DualSense controllers**. DualShock 4, Xbox, Switch Pro,
-8BitDo and any Bluetooth HID gamepad, with no dongle.
+## Install
 
-It does not modify games, the firmware or the jailbreak. It needs a console that already runs
-a payload loader (tested with the WebKit autoloader + Payload Manager, kstuff-lite and ShadowMountPlus).
+1. Download `AnyACE-PS5-<version>.elf` from the
+   [Releases](../../releases) page.
+2. Send it to your console's payload loader (port 9021 with the usual
+   jailbreak chain), or copy it to a USB drive and import it into Payload
+   Manager. It can be added to your autoload list.
+3. A notification shows the menu address, for example
+   `http://192.168.1.50:8095`. Open it on your phone, a PC on the same
+   network, or the console's browser. On firmware up to 13.4x an **AnyACE**
+   tile also appears in the console's *Media* row and opens the menu.
 
-## What works today
+Do not run AnyACE together with OmniPad-PS5 (another fork of the same
+code): it shares AnyACE's state folder and stops AnyACE when it starts.
 
-- Pairing from a web page (and from the console's *Media* row), reconnection by switching the pad on.
-- **DualShock 4: buttons, sticks, triggers, in the console menus and in games and emulators** (verified).
-- A menu in the console's *Media* row ("AnyPad", with the orange pad icon) that opens the web page.
-- A log (`/data/anypad/anypad.log`) with the console's firmware and the payloads running beside it.
+## Use
 
-The full list of controllers, one by one, with their status, is in
-[COMPATIBILITY.md](COMPATIBILITY.md).
+### 1. Create a second console user (once)
 
-## IMPORTANT: use a second console user
+Games only take a pad from the user who owns it, and your DualSense's user
+already has one. So:
 
-Games do not take the controller from the user who owns your DualSense, so the pad has to belong to
-another user. So:
+1. On the console, **Settings → Users and Accounts → add a new user**. Name
+   it after the pad ("PS4", "Xbox"…) so you always know which is which.
+2. When a pad connects, the console asks **"who is using this
+   controller?"** — choose that new user.
+3. Play with your own main user. Tap **PS** on the pad (or **Press PS** in
+   the menu, for pads without a PS button) to make it the active pad.
 
-1. **Create a new user** on the console (Settings → Users). Tip: **name the user after the controller** ("PS4" for a DualShock 4, "Wii" for a Wii pad, "Xbox"…) so you always know which user holds which pad.
-2. Run AnyPad PS5 and pair the controller.
-3. When the console detects the pad and asks which user it is for, **choose the new user**.
-4. Play with your main user as usual. A PlayStation pad (DualShock 4 / 3) has its own PS button: press it.
-   **A pad without a PS button** (anything that is not a PlayStation pad) uses the blue **"Pulsar PS"** button
-   of the AnyPad menu (in "Mandos emparejados", to the left of "Olvidar"), which is the same as holding PS. The
-   pad of the created user is then the one used.
+The menu's *Settings* section can press PS for you automatically, and can
+assign every pad to a chosen user.
 
-   When you press it, the console shows a system message again. It refers to the DualSense, to take back the
-   priority: with a pad that is not from PlayStation, the priority goes back to the DualSense. To give the control
-   back to the paired pad, return to the AnyPad menu and press **"Pulsar PS"** again.
+### 2. Pair a Bluetooth pad
 
-With the same user as the DualSense, the pad works in the console menus but games and
-emulators do not see it.
+![Pairing](docs/screenshots/pairing.jpg)
 
-## Install and run
+1. In the menu, press **Search for pads (60 s)**.
+2. Put the pad in pairing mode (DualShock 4: hold *Share + PS* until the
+   light bar flashes fast; Switch Pro: hold the small *Sync* button; Xbox:
+   hold the *Pair* button; 8BitDo: see its manual).
+3. The pad appears in the list with its name. Tap **Pair** on it.
+4. Choose the second user when the console asks. Done: the pad reconnects
+   by itself whenever you switch it on.
 
-1. Download `AnyPad-PS5-<version>-alpha.elf` from the
-   [Releases](https://github.com/sinfiltros/AnyPad-PS5/releases) page, or build it (below).
-2. Copy it to the root of a USB drive and import it into Payload Manager, or send it to your loader.
-3. Launch it. A notification shows the menu address and the reminder about the second user.
-4. Open the menu from the *Media* row ("AnyPad") or from any device on your network at
-   `http://<console ip>:8095/`.
-5. Press **Emparejar** and put the controller in pairing mode:
+If the pad found is a DualSense, it is marked and only paired after a
+confirmation, so your console's own pad is never taken by accident.
 
-| Controller | Pairing mode |
+### 3. Plug in a wired pad
+
+Nothing to do: plug it into a USB port of the console. It appears under
+**Wired controllers** within a few seconds and gets a player slot (P5–P8)
+as soon as you press something.
+
+### 4. The player cards
+
+![Players](docs/screenshots/players.jpg)
+
+Every connected pad has a card with its live sticks, triggers and buttons,
+battery, and these buttons:
+
+| Button | What it does |
 |---|---|
-| DualShock 4 | Share + PS, until the light bar double-flashes |
-| DualSense | Create + PS, until the light flashes |
-| Xbox | Turn it on, then hold the pairing button on top |
-| Switch Pro | The small button on top, next to USB-C |
-| 8BitDo | Its pairing button, or the start combination for the mode you want |
-| Others | See the controller's manual |
+| **Test** | A full-size pad that lights up every button, stick and trigger as the console receives them, with a checklist. |
+| **Remap** | Change what each button does, swap the sticks, invert axes (below). |
+| **Rumble** | Both motors for a moment, to check the pad's rumble works. |
+| **Press PS** | The same as holding PS on the pad, for pads that have no PS button. |
+| **Disconnect** | Drops the Bluetooth link; the pad stays paired. |
 
-After that, switching the controller on is enough: it reconnects by itself.
+If the console did not give the pad to a user, the card says so and offers
+**Retry binding**.
 
-AnyPad PS5 can be added to your payload loader's autoload list like any other payload.
+### 5. Remap a pad
 
-**Always stop AnyPad from the page ("Apagar AnyPad PS5 (avanzado)") before launching it again.**
-A payload killed without closing its Bluetooth links can leave a stale link on the chip; this
-version closes stale links when it finds one, but a clean stop is still best. The *Salir* button
-only leaves the page and keeps AnyPad running.
+![Remap](docs/screenshots/remap.jpg)
 
-## Several controllers at once
+Press a button on the pad and its row lights up; choose what the console
+should see (any button, or nothing). *Swap the sticks* and *Invert …* are
+below. **Save** applies at once and is remembered for that pad model, in
+`/data/anypad/remap/`. **Back to default** forgets it.
 
-AnyPad PS5 handles **up to 4 controllers at the same time**, each with its own profile (a DualShock 4
-next to an Xbox pad and a Switch Pro, for example). The menu lists every paired pad, and each
-connected one has a blue **"Pulsar PS"** button to make one or another the active pad. The console itself seems to accept 4
-controllers in total, so the DualSense counts too (this limit is not verified on a console). Give each pad
-its own console user, named after it.
+### 6. Test the buttons
 
-## The same on any console
+![Test buttons](docs/screenshots/test.jpg)
 
-Nothing in AnyPad PS5 is tied to one console or one network. The menu address shown in the start-up
-notification is read from the console's own network settings, the *Media* row entry opens
-`http://127.0.0.1:8095/` (the console itself), and the page is served on port 8095. From another device
-you need to be on the same local network (private ranges 10.x, 172.16-31.x, 192.168.x).
+### 7. Settings
 
-## Mapping a controller with no profile
+- **When a pad connects:** do nothing, or press PS automatically.
+- **Give pads to:** the console's choice, or a signed-in user by name.
 
-The log prints the ids and what the HID descriptor has. To change the mapping, write
-`/data/anypad/maps/VVVV_PPPP.map` (see `maps/EXAMPLE.map`) and reconnect the pad.
+Both are saved on the console (`/data/anypad/settings.txt`).
 
-## The web page
+### Paired pads
 
-Port **8095**: connected pads live, paired pads, pair, forget, log, stop. There is **no PIN**, by
-choice: anyone on the same local network can use it. It only accepts private-network peers, an IPv4
-`Host`, a custom header on changes, at most 8 clients and small requests.
+The list of every pad you paired, with **Forget**. A forgotten pad has to
+be paired again.
 
-## Stability rules the code follows
+### Log
 
-- One instance (atomic lock); the thread is named `AnyPad PS5`.
-- Minimal changes to the shared Bluetooth controller; no reset; page scan restored on exit.
-- It only closes or deletes its own links and virtual pads.
-- Raised credentials are checked and restored; it stops before touching Bluetooth if they fail.
-- Everything bounded: tries, parsers, log rotation (1 MB), atomic storage.
-- Stops by itself when the console starts going to rest mode.
-- Tested off the console with simulators (including packet loss), 200 000 malformed inputs, and the
-  address and undefined-behaviour sanitizers. That lowers the risk; it proves nothing about your console.
+**Show log** at the bottom of the menu shows what AnyACE is doing; **Clear
+log** empties it. When something does not work, this log is what to send
+along with a report. It is also at `http://<console>:8095/api/log`.
 
-## Build and test
+## Troubleshooting
 
+- **The pad is connected but games ignore it.** Make sure it was given to
+  the second user (the card says "Not reaching the console…" otherwise, with
+  a Retry button), then tap PS on it.
+- **A pad will not pair.** Switch it fully off, put it in pairing mode again,
+  search again. The card says why the last attempt failed (no answer, the
+  pad kept connecting to the console by itself, the chip refused the
+  connection).
+- **My DualSense stopped working with the console.** Reset it (the small hole
+  on the back, ~5 s with a paper clip) and connect it with a USB-C cable.
+  Forget it in AnyACE's paired list if it is there.
+- **A wired pad does nothing.** Look at *Wired controllers*: "Detected,
+  starting…" means it was recognised; the log says which protocol it was
+  taken for. Xbox 360 pads over Bluetooth are not supported (they have no
+  Bluetooth); over USB they are.
+- **Rest mode.** AnyACE stops when the console goes to rest mode. Launch it
+  again after waking up (or put it in your autoload).
+
+## Build it yourself
+
+Host tests (no console needed) on macOS or Linux:
+
+```bash
+make test && make fuzz
 ```
-make test                                  # unit tests + simulation, on a Mac or Linux PC
-make fuzz                                  # malformed input under the sanitizers
-tools/build-elf-docker.sh /path/to/ps5-payload-sdk   # the ELF, without installing anything
+
+The console payload needs the [ps5-payload-sdk](https://github.com/ps5-payload-dev/sdk)
+(release zip, unpacked) and Docker:
+
+```bash
+tools/build-elf-docker.sh /path/to/ps5-payload-sdk
 ```
 
-The ELF is `dist/AnyPad-PS5-<version>-alpha.elf` (version in `src/version.h`).
+The ELF lands in `dist/AnyACE-PS5-<version>.elf` with a `.sha256` beside
+it. `make send PS5_HOST=<ip>` sends it to the console's loader.
 
-| Path | Purpose |
-|---|---|
-| `src/hci_usb.c` | The Bluetooth chip, shared with the system's driver |
-| `src/host.c` | Pairing, reconnection, L2CAP, SDP, HID, retries, stale-link cleanup |
-| `src/le.c`, `src/smp_crypto.c` | Bluetooth LE: pairing, GATT, HID over GATT |
-| `src/profiles.c`, `src/generic.c` | Controller profiles and the generic HID mapping |
-| `src/ps5_vpad.c` | The virtual DualSense bound to a console user |
-| `src/web.c`, `web/index.html` | The web page and its API |
-| `src/launcher.c`, `src/ps5_apps.c` | The "AnyPad" entry in the *Media* row |
-| `tests/` | Tests and the simulators |
+The code is plain C11. `src/host.c` and `src/le.c` are the Bluetooth stack
+(Classic and LE, on the console's chip, beside the system's own driver),
+`src/profiles.c` and `src/generic.c` understand each pad, `src/usb_pads.c`
+the wired ones, `src/ps5_vpad.c` the virtual DualSense, `src/web.c` and
+`web/index.html` the menu. Every parser is fuzzed under the sanitizers.
 
-Test log of the console trials: [PRUEBAS.md](PRUEBAS.md) (Spanish). Version history: [CHANGELOG.md](CHANGELOG.md).
+## Credits and license
 
-## Licence
+- [AnyPad-PS5](https://github.com/sinfiltros/AnyPad-PS5) by sinfiltros: the
+  project this is built on, and the Bluetooth stack.
+- [FGG-XSense](https://github.com/FGGstore/FGG-XSense) by FGG STORE: the
+  wired Xbox (GIP) support began as a port of it.
+- [OmniPad-PS5](https://github.com/diegobarbosaa/OmniPad-PS5) by Diego
+  Lima: pointed the way to the wired pads worth supporting and the 2.4 GHz
+  dongles' wake-up.
+- Nicolas8aa, for finding why payloads did not start on firmware 13.60.
+- The Linux kernel's xpad, hid-sony and hid-nintendo drivers, for the
+  protocol details of the wired pads.
 
 GPL-3.0-or-later. See [LICENSE](LICENSE).
-
-## Contact
-
-exposed.ct.ws@gmail.com · X / Twitter: [@elmonomalvad0](https://x.com/elmonomalvad0)
-
-
----
-
-<a name="español"></a>
-# 🇪🇸 Español
-
-> ## ⚠️ FALLO CONOCIDO: puede estropear el DualSense de la consola
-> Mientras AnyPad busca o empareja, puede detectar el **propio DualSense de la consola** y emparejarlo por error. Entonces el DualSense deja de funcionar con normalidad con la consola.
-> **Hasta que se arregle: mantén tu DualSense APAGADO mientras emparejas otros mandos.**
-> Si ocurre: resetea el DualSense (agujero pequeño de la parte trasera, junto a L2, mantén ~5 s con un clip) y conéctalo a la consola con el cable USB-C.
-
-> ## ⚠️ OBLIGATORIO: crea un usuario NUEVO en la consola
-> **AnyPad PS5 no funciona si el mando se asigna al mismo usuario que tu DualSense.**
-> Debes **crear un usuario nuevo en la PS5** y asignarle el mando cuando la consola lo pregunte. Juega
-> con tu usuario principal y **pulsa el botón PS un momento**: entonces se usa el mando del usuario creado.
-> Si el mando se queda en el usuario del DualSense, solo funciona en los menús de la consola y los juegos
-> y emuladores no lo ven. Detalles [más abajo](#importante-usa-un-segundo-usuario-de-la-consola).
-
-> **ALPHA.** Verificado en una PS5 real (fat, firmware 10.01) con un **DualShock 4**.
-> Los mandos de otras consolas y marcas (Xbox, Nintendo Switch, 8BitDo y más) están soportados
-> para que puedas usarlos en la PS5, pero aún no se han probado en consola. Ver
-> [COMPATIBILITY.md](COMPATIBILITY.md).
-
-## Un «jailbreak» para el mando de la PS5
-
-Una PS5 solo acepta su DualSense (y algunos mandos con licencia). AnyPad PS5 es un
-**jailbreak de mandos**: un payload residente para una PS5 con jailbreak que conecta otros
-mandos Bluetooth a través del chip Bluetooth de la propia consola y se los presenta al
-sistema y a los juegos como **DualSense virtuales**. DualShock 4, Xbox, Switch Pro, 8BitDo y
-cualquier mando HID Bluetooth, sin adaptadores.
-
-No modifica juegos, ni el firmware, ni el jailbreak. Necesita una consola que ya ejecute un
-cargador de payloads (probado con el WebKit autoloader + Payload Manager, kstuff-lite y ShadowMountPlus).
-
-## Qué funciona hoy
-
-- Emparejado desde una página web (y desde la fila *Contenido multimedia* de la consola) y reconexión al encender el mando.
-- **DualShock 4: botones, sticks y gatillos, en los menús de la consola y en juegos y emuladores** (verificado).
-- Una entrada en *Contenido multimedia* («AnyPad», con el icono del mando naranja) que abre la página web.
-- Un log (`/data/anypad/anypad.log`) con el firmware de la consola y los payloads que corren a su lado.
-
-La lista completa de mandos, uno por uno y con su estado, está en [COMPATIBILITY.md](COMPATIBILITY.md).
-
-## IMPORTANTE: usa un segundo usuario de la consola
-
-Los juegos no toman el mando del usuario al que pertenece tu DualSense, así que el mando tiene que
-pertenecer a otro usuario. Por eso:
-
-1. **Crea un usuario nuevo** en la consola (Ajustes → Usuarios). Consejo: **ponle al usuario el nombre del mando** («PS4» para un DualShock 4, «Wii» para un mando de Wii, «Xbox»…) para saber siempre qué usuario tiene cada mando.
-2. Ejecuta AnyPad PS5 y empareja el mando.
-3. Cuando la consola detecte el mando y pregunte para qué usuario es, **elige el usuario nuevo**.
-4. Juega con tu usuario principal como siempre. Un mando de PlayStation (DualShock 4 / 3) tiene su propio
-   botón PS: púlsalo. **Un mando sin botón PS** (cualquiera que no sea de PlayStation) usa el botón azul
-   **«Pulsar PS»** del menú de AnyPad (en «Mandos emparejados», a la izquierda de «Olvidar»), que equivale a
-   mantener pulsado PS. Entonces se usa el mando del usuario creado.
-
-   Al pulsarlo, la consola vuelve a mostrar un mensaje del sistema. Se refiere al DualSense, para recuperar la
-   prioridad: con un mando que no es de PlayStation, la prioridad vuelve al DualSense. Para devolver el control
-   al mando emparejado, vuelve al menú de AnyPad y pulsa **«Pulsar PS»** otra vez.
-
-Con el mismo usuario del DualSense, el mando funciona en los menús de la consola pero los
-juegos y emuladores no lo ven.
-
-## Instalar y ejecutar
-
-1. Descarga `AnyPad-PS5-<versión>-alpha.elf` desde
-   [Releases](https://github.com/sinfiltros/AnyPad-PS5/releases), o compílalo (abajo).
-2. Cópialo a la raíz de un USB e impórtalo en Payload Manager, o envíalo a tu cargador.
-3. Lánzalo. Una notificación muestra la dirección del menú y el aviso del segundo usuario.
-4. Abre el menú desde *Contenido multimedia* («AnyPad») o desde cualquier dispositivo de tu red en
-   `http://<ip de la consola>:8095/`.
-5. Pulsa **Emparejar** y pon el mando en modo emparejamiento:
-
-| Mando | Modo emparejamiento |
-|---|---|
-| DualShock 4 | Share + PS, hasta que la barra de luz parpadee doble |
-| DualSense | Create + PS, hasta que la luz parpadee |
-| Xbox | Enciéndelo y mantén el botón de emparejado de arriba |
-| Switch Pro | El botón pequeño de arriba, junto al USB-C |
-| 8BitDo | Su botón de emparejado o la combinación de inicio del modo que quieras |
-| Otros | Mira el manual del mando |
-
-Después basta con encender el mando: se reconecta solo.
-
-AnyPad PS5 se puede añadir a la lista de autoload de tu cargador de payloads, como cualquier otro.
-
-**Para AnyPad siempre desde la página («Apagar AnyPad PS5 (avanzado)») antes de volver a lanzarlo.**
-Un payload cortado sin cerrar sus enlaces Bluetooth puede dejar un enlace huérfano en el chip; esta
-versión los cierra cuando los encuentra, pero lo mejor es parar limpio. El botón *Salir* solo
-abandona la página y deja AnyPad funcionando.
-
-## Varios mandos a la vez
-
-AnyPad PS5 maneja **hasta 4 mandos a la vez**, cada uno con su propio perfil (un DualShock 4 junto a un
-mando Xbox y un Switch Pro, por ejemplo). El menú lista cada mando emparejado y cada
-conectado tiene un botón azul **«Pulsar PS»** para activar uno u otro como mando principal. La propia consola parece admitir 4 mandos
-en total, así que el DualSense también cuenta (este límite no está verificado en consola). Dale a cada
-mando su propio usuario de la consola, con su nombre.
-
-## Igual en cualquier consola
-
-Nada de AnyPad PS5 está atado a una consola ni a una red. La dirección del menú que muestra la
-notificación de arranque se lee de la configuración de red de la propia consola, la entrada de
-*Contenido multimedia* abre `http://127.0.0.1:8095/` (la propia consola) y la página se sirve en el puerto
-8095. Desde otro dispositivo hace falta estar en la misma red local (rangos privados 10.x, 172.16-31.x, 192.168.x).
-
-## Mapear un mando sin perfil
-
-El log imprime los ids y lo que trae el descriptor HID. Para cambiar el mapeo, escribe
-`/data/anypad/maps/VVVV_PPPP.map` (ver `maps/EXAMPLE.map`) y reconecta el mando.
-
-## La página web
-
-Puerto **8095**: mandos conectados en vivo, emparejados, emparejar, olvidar, log, parar. **No hay PIN**,
-por decisión propia: cualquiera de tu red local puede usarla. Solo admite equipos de red privada, un
-`Host` IPv4, una cabecera propia en los cambios, como mucho 8 clientes y peticiones pequeñas.
-
-## Reglas de estabilidad que sigue el código
-
-- Una sola instancia (bloqueo atómico); el hilo se llama `AnyPad PS5`.
-- Cambios mínimos en el controlador Bluetooth compartido; sin reset; el page scan se restaura al salir.
-- Solo cierra o borra sus propios enlaces y mandos virtuales.
-- Las credenciales elevadas se comprueban y se restauran; si fallan, se detiene antes de tocar el Bluetooth.
-- Todo acotado: intentos, analizadores, rotación del log (1 MB), almacenamiento atómico.
-- Se detiene solo cuando la consola empieza a entrar en reposo.
-- Probado fuera de la consola con simuladores (con pérdida de paquetes), 200 000 entradas malformadas y los
-  sanitizadores de memoria y comportamiento indefinido. Reduce el riesgo; no demuestra nada sobre tu consola.
-
-## Compilar y probar
-
-```
-make test                                  # pruebas unitarias + simulación, en Mac o Linux
-make fuzz                                  # entradas malformadas bajo los sanitizadores
-tools/build-elf-docker.sh /ruta/al/ps5-payload-sdk   # el ELF, sin instalar nada
-```
-
-El ELF es `dist/AnyPad-PS5-<versión>-alpha.elf` (versión en `src/version.h`).
-
-Registro de pruebas en consola: [PRUEBAS.md](PRUEBAS.md). Historial de versiones: [CHANGELOG.md](CHANGELOG.md).
-
-## Licencia
-
-GPL-3.0-or-later. Ver [LICENSE](LICENSE).
-
-## Contacto
-
-exposed.ct.ws@gmail.com · X / Twitter: [@elmonomalvad0](https://x.com/elmonomalvad0)

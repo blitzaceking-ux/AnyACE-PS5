@@ -20,6 +20,25 @@ typedef struct {
     sim_mode mode;
     unsigned char addr[6];
     uint32_t cod;
+    /* Its name: sent in the extended inquiry response if name_in_eir, else
+     * only on a Remote Name Request. "": it does not answer one. */
+    char name[64];
+    int name_in_eir;
+    /* In pairing mode it also calls the host by itself every few seconds,
+     * as a pad that remembers the host does (8BitDo); while that call is
+     * pending, the host's own page to it fails with "already exists". */
+    int pages_host;
+    /* It never answers a page. */
+    int no_answer;
+    /* A stale link (sim_stale_link) is reported the way the console does it:
+     * the page is accepted, then Connection Complete says 0x0b; an Accept
+     * Connection with no call pending is refused with 0x0c. */
+    int stale_in_complete;
+    /* It takes a page only this soon (ms) after answering an inquiry. 0: any time. */
+    int page_window_ms;
+    /* pages_host, but the host never hears the call (the event goes to the
+     * system's driver); answering blindly still works. */
+    int call_unheard;
     uint16_t vid, pid;
     /* The input report the pad streams once its interrupt channel is open
      * and it has seen an output report (or at once, if !needs_output). */
@@ -67,5 +86,7 @@ int    sim_scan(const sim_t *s);           /* the controller's scan enable */
 void   sim_set_scan(sim_t *s, int v);     /* someone else changes it */
 void   sim_stale_link(sim_t *s, unsigned handle);   /* the chip still holds the pad's link from an earlier run */
 int    sim_stale_cleared(const sim_t *s);
+int    sim_name_requests(const sim_t *s);
+int    sim_pages(const sim_t *s);      /* Create Connection commands the host sent */
 
 #endif

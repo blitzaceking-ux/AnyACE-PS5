@@ -1,5 +1,9 @@
 /* Malformed input: random and mutated bytes through every parser a pad
  * can reach. Run under the sanitizers (make fuzz) it must find nothing. */
+#include "../src/gip.h"
+#include "../src/remap.h"
+#include "../src/xinput.h"
+#include "../src/host_int.h"
 #include "../src/profiles.h"
 
 #include <stdio.h>
@@ -24,7 +28,7 @@ static const unsigned char k_desc[] = {
 int main(void)
 {
     static const uint16_t ids[][2] = {
-        { 0x054C, 0x05C4 }, { 0x054C, 0x0CE6 }, { 0x045E, 0x0B13 }, { 0x057E, 0x2009 },
+        { 0x054C, 0x05C4 }, { 0x054C, 0x0CE6 }, { 0x045E, 0x0B13 }, { 0x057E, 0x2009 }, { 0x054C, 0x0268 },
     };
     unsigned char buf[600], ctx[PROFILE_CTX_MAX];
     long i;
@@ -53,7 +57,7 @@ int main(void)
                 generic_profile.parse(ctx, rep, m, &st);
             }
         }
-        for (p = 0; p < 4; p++) {
+        for (p = 0; p < 5; p++) {
             const pad_profile *prof = profile_find(ids[p][0], ids[p][1]);
             memset(ctx, 0, sizeof ctx);
             if (prof->setup) prof->setup(ctx, ids[p][0], ids[p][1]);
@@ -61,6 +65,58 @@ int main(void)
             prof->parse(ctx, buf, n < 80 ? n : 80, &st);
         }
         sdp_find_ids(buf, n, &vid, &pid);
+
+        /* A remapping from any text, and applied to any state. */
+        {
+            remap_t rm;
+            pad_state rs;
+            char txt[128];
+            int m = n < 127 ? n : 127;
+            memcpy(txt, buf, (size_t)m);
+            txt[m] = '\0';
+            remap_parse(&rm, txt);
+            remap_from_query(&rm, txt);
+            rs.buttons = (uint32_t)rnd();
+            rs.lx = (uint8_t)rnd(); rs.ly = (uint8_t)rnd(); rs.rx = (uint8_t)rnd(); rs.ry = (uint8_t)rnd();
+            rs.l2 = (uint8_t)rnd(); rs.r2 = (uint8_t)rnd();
+            remap_apply(&rm, &rs);
+        }
+
+        /* XInput reports of any bytes. */
+        {
+            pad_state xs;
+            int present;
+            xinput_parse_wired(buf, n, &xs);
+            xinput_parse_receiver(buf, n, &xs, &present);
+        }
+
+        /* The Xbox USB protocol: a descriptor and a report of any bytes. */
+        {
+            gip_layout lay;
+            pad_state gs;
+            gip_scan_layout(buf, n, &lay);
+            gip_parse_input(buf, n, i & 4, &gs);
+            gip_parse_guide(buf, n);
+        }
+
+        /* A name from the air (extended inquiry response, advert, scan
+         * response): always terminated, printable, within its buffer. */
+        {
+            static const unsigned char eir[] = { 0x05, 0x02, 0x24, 0x11, 0x00, 0x12,
+                0x1E, 0x09, 'D', 'u', 'a', 'l', 'S', 'e', 'n', 's', 'e', ' ', 'W', 'i', 'r', 'e',
+                'l', 'e', 's', 's', ' ', 'C', 'o', 'n', 't', 'r', 'o', 'l', 'l', 'e', 'r' };
+            found_t f;
+            int m = n;
+            if (!(i & 2)) {
+                memcpy(buf, eir, sizeof eir);
+                buf[rnd() % sizeof eir] = (unsigned char)rnd();
+                m = (int)sizeof eir;
+            }
+            memset(&f, 0, sizeof f);
+            found_name_from_ad(&f, buf, m);
+            if (strlen(f.name) > HOST_FOUND_NAME) abort();
+            for (k = 0; f.name[k]; k++) if (f.name[k] < 0x20 || f.name[k] > 0x7E) abort();
+        }
     }
     printf("fuzz: 200000 inputs, %d descriptors accepted, no fault\n", accepted);
     return 0;

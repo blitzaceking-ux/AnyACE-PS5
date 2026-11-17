@@ -30,6 +30,8 @@
 #define OP_WRITE_CLASS_OF_DEV   0x0C24
 #define OP_WRITE_INQUIRY_MODE   0x0C45
 #define OP_WRITE_SSP_MODE       0x0C56
+#define OP_REMOTE_NAME_REQ      0x0419
+#define OP_LE_CREATE_CONN_CANCEL_OP 0x200E
 #define OP_READ_BUFFER_SIZE     0x1005
 #define OP_READ_BD_ADDR         0x1009
 #define OP_READ_SCAN_ENABLE     0x0C19
@@ -93,11 +95,43 @@
 #define INFLIGHT_MAX      64
 #define INFLIGHT_MS       60
 
+/* Devices a pairing search found, shown on the web page until the user
+ * picks one. Nothing is paired without that pick. */
+#define FOUND_MAX          8
+#define FOUND_TTL      60000    /* not seen for this long: gone */
+#define T_NAME_WAIT     5000    /* a name request the controller never answers */
+#define SYS_MAX            8    /* addresses the console's own driver uses */
+#define T_PICK_GRACE   60000    /* a link we asked for may complete this late */
+#define T_PICK_RETRY    4000    /* between tries at a picked pad */
+#define PICK_TRIES         4    /* connection tries in a row before the pick is given up */
+#define PICK_TRIES_TOTAL  24    /* tries of any kind, whatever happens between them */
+#define T_PICK_FRESH    1500    /* page a picked pad only this soon after it answered a search */
+#define T_PICK_EXTEND  25000    /* a pick keeps the search going at least this long */
+
 #define DB_MAX            16
-#define DB_REC            64    /* one record in the store file */
-#define DB_MAGIC     "ANYPAD02"
+#define DB_REC_02         64    /* one record in a format-02 store (no name) */
+#define DB_REC           128    /* one record in the store file: 02's 64 bytes, then the name */
+#define DB_MAGIC     "ANYPAD03"
+#define DB_MAGIC_02  "ANYPAD02"
 
 /* ---- state -------------------------------------------------------------- */
+
+enum { NAME_NONE, NAME_ASKED, NAME_KNOWN, NAME_FAILED };
+
+/* A device seen by a pairing search: Classic (from an inquiry record, kept
+ * to page it with) or LE (from an advert). */
+typedef struct {
+    int used;
+    unsigned char addr[6];
+    unsigned char rec[14];          /* Classic: inquiry record, RSSI layout */
+    int le;
+    uint8_t addr_type;              /* LE */
+    uint32_t cod;                   /* Classic */
+    int rssi;
+    char name[HOST_FOUND_NAME + 1];
+    int name_state;                 /* NAME_* */
+    long t_seen, t_name;
+} found_t;
 
 typedef enum { CH_CLOSED, CH_CONNECTING, CH_CONFIG, CH_OPEN } chan_state;
 
@@ -119,6 +153,7 @@ typedef struct {
     uint8_t le, addr_type;
     uint16_t ediv;
     uint8_t rand[8], irk[16], has_irk;
+    char name[HOST_FOUND_NAME + 1];     /* its Bluetooth name when paired, "" unknown */
 } db_rec;
 
 typedef struct {
@@ -166,6 +201,13 @@ typedef struct {
     uint16_t map_handle;
     uint8_t map[1024];
     int map_len;
+
+    /* The Battery Service, read once discovery is done and then now and
+     * then: 0 not looked for, 1 asked, 2 known, 3 reading, 9 none. */
+    int batt_state;
+    uint16_t batt_handle;
+    long t_batt;
+    int batt_pct;                   /* -1 unknown */
 } le_link;
 
 typedef struct {
@@ -201,6 +243,12 @@ typedef struct {
     pad_state st;
     pad_output out;
     long t_out;
+    long n_reports;                 /* input reports parsed, for the page */
+    uint8_t last_rid;               /* id of the last one */
+    long n_other;                   /* reports the profile did not take */
+    uint8_t rid_other;              /* id of the last of those */
+    int n_logged;                   /* of those, how many were logged in full */
+    char name[HOST_FOUND_NAME + 1]; /* from the search that found it, "" unknown */
 
     /* The profile's own memory, and its wake-up sequence. */
     union { unsigned char bytes[PROFILE_CTX_MAX]; uint64_t align; } pctx;
@@ -242,6 +290,20 @@ struct host {
     link_t *dhkey_owner;            /* the link a DHKey is being made for */
 
     long pair_until;
+    found_t found[FOUND_MAX];
+    int name_asking;                /* a name request is out (Classic) */
+    unsigned char sys_addr[SYS_MAX][6];     /* links the console's driver made */
+    int sys_handle[SYS_MAX];                /* and their handles, -1 once gone */
+    int nsys;
+    unsigned char pick_addr[6];     /* the last device the user picked */
+    long pick_at;
+    int pick_wait, pick_force;      /* that pick waits for its name */
+    int pick_want;                  /* and is wanted until the window closes */
+    unsigned char pick_rec[14];     /* its inquiry record, to page it again */
+    char pick_name[HOST_FOUND_NAME + 1];
+    int pick_state, pick_why, pick_tries;   /* HOST_PICK_*, HOST_WHY_* */
+    int pick_total;
+    long pick_try_at;
     long purge_at;                  /* when stale links were last cleared */
     int inquiring;
     int dead;               /* the transport is gone */
@@ -267,14 +329,31 @@ void link_input(host_t *h, link_t *l, const unsigned char *rep, int len);
 int  l2_send(host_t *h, link_t *l, unsigned cid, const unsigned char *d, int len);
 void init_tick(host_t *h, link_t *l, long now);
 
+/* Records a device a pairing search saw (host.c); le.c reports adverts. */
+found_t *found_add(host_t *h, const unsigned char *addr, int le, uint8_t addr_type, int rssi);
+found_t *found_find_le(host_t *h, const unsigned char *addr);
+int pick_wanted(const host_t *h, const unsigned char *addr);
+/* The pick's bookkeeping, shared with le.c: a try is about to start (paces
+ * and counts them; 0 if not now, or given up), a try failed, the chip's
+ * stale links are closed. */
+int  pick_try_begin(host_t *h, const unsigned char *addr);
+void pick_connected(host_t *h, const unsigned char *addr);
+void pick_failed_try(host_t *h, const unsigned char *addr, int why);
+void purge_stale_links(host_t *h);
+void found_name_from_ad(found_t *f, const unsigned char *d, int n);
+
 db_rec *db_find(host_t *h, const unsigned char *addr);
 db_rec *db_put(host_t *h, const unsigned char *addr);
+/* db_put, and the link's name into a record that has none. */
+db_rec *db_put_link(host_t *h, const unsigned char *addr, const link_t *l);
+void link_set_name(host_t *h, const unsigned char *addr, const char *name);
 void db_save(host_t *h);
 void db_forget(host_t *h, const unsigned char *addr);
 
 /* le.c */
 void le_setup(host_t *h);
 void le_on_meta(host_t *h, const unsigned char *ev, int len);
+int  le_pair(host_t *h, uint8_t type, const unsigned char *addr);
 void le_on_frame(host_t *h, link_t *l, unsigned cid, const unsigned char *d, int len);
 void le_on_encryption(host_t *h, link_t *l, int status, int on);
 void le_step(host_t *h, link_t *l, long now);

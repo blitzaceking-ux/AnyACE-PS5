@@ -17,7 +17,7 @@
 #define WEB_CLIENTS     8
 #define REQ_MAX         8192
 #define T_REQUEST       3000    /* ms for a client to send its request */
-#define LOG_TAIL        6144
+#define LOG_TAIL       24576
 
 extern const unsigned char web_page_html[];
 extern const unsigned int web_page_html_len;
@@ -66,7 +66,7 @@ static void send_all(int fd, const char *p, size_t n)
 static void respond(int fd, int code, const char *type, const char *body, size_t len)
 {
     char head[256];
-    const char *msg = code == 200 ? "OK" : code == 400 ? "Bad Request" : code == 403 ? "Forbidden" : code == 404 ? "Not Found" : code == 429 ? "Too Many Requests" : "Error";
+    const char *msg = code == 200 ? "OK" : code == 400 ? "Bad Request" : code == 403 ? "Forbidden" : code == 404 ? "Not Found" : code == 409 ? "Conflict" : code == 429 ? "Too Many Requests" : "Error";
     int n = snprintf(head, sizeof head,
                      "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %u\r\n"
                      "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n"
@@ -146,6 +146,8 @@ static void fmt_addr(char *out, const unsigned char *a)
 
 /* ---- API --------------------------------------------------------------------- */
 
+#define FOUND_LIST_MAX 8                /* devices listed in the state */
+
 /* Copies `s` into out as JSON string content: quotes, backslashes and
  * control characters are dropped, so nothing can break the document. */
 static void json_text(char *out, size_t max, const char *s)
@@ -203,12 +205,23 @@ static void api_state(web_t *w, int fd)
         pad_state st;
         size_t b;
         int fb = 1;
+        long reports = 0, other = 0;
+        int rid = 0, rid_other = 0;
+        char name[sizeof info.name];
+        pad_state raw;
         if (!host_pad_get(h, i, &info, &st)) continue;
         fmt_addr(a, info.addr);
-        PUT("%s{\"slot\":%d,\"profile\":\"%s\",\"vid\":\"%04x\",\"pid\":\"%04x\",\"addr\":\"%s\","
+        host_pad_stats(h, i, &reports, &rid, &other, &rid_other);
+        raw = st;
+        if (w->cfg.remap_apply) w->cfg.remap_apply(i, &st);
+        json_text(name, sizeof name, info.name);
+        PUT("%s{\"slot\":%d,\"profile\":\"%s\",\"name\":\"%s\",\"vid\":\"%04x\",\"pid\":\"%04x\",\"addr\":\"%s\","
+            "\"vpad\":\"%s\",\"probe\":\"%s\",\"reports\":%ld,\"rid\":\"%02x\",\"other\":%ld,\"rid_other\":\"%02x\","
             "\"battery\":%d,\"charging\":%s,\"lx\":%u,\"ly\":%u,\"rx\":%u,\"ry\":%u,\"l2\":%u,\"r2\":%u,"
             "\"buttons\":[",
-            first ? "" : ",", i + 1, info.profile, info.vid, info.pid, a,
+            first ? "" : ",", i + 1, info.profile, name, info.vid, info.pid, a,
+            w->cfg.vpad_state ? w->cfg.vpad_state(i) : "", w->cfg.probe_status ? w->cfg.probe_status(i) : "",
+            reports, rid, other, rid_other,
             st.has_battery ? st.battery_pct : -1, st.charging ? "true" : "false",
             st.lx, st.ly, st.rx, st.ry, st.l2, st.r2);
         for (b = 0; b < sizeof names / sizeof names[0]; b++)
@@ -216,21 +229,103 @@ static void api_state(web_t *w, int fd)
                 PUT("%s\"%s\"", fb ? "" : ",", names[b].name);
                 fb = 0;
             }
+        PUT("],\"raw\":[");
+        for (b = 0, fb = 1; b < sizeof names / sizeof names[0]; b++)
+            if (raw.buttons & names[b].bit) {
+                PUT("%s\"%s\"", fb ? "" : ",", names[b].name);
+                fb = 0;
+            }
         PUT("]}");
+        first = 0;
+    }
+    for (i = 0; w->cfg.wired && i < WEB_MAX_SLOTS; i++) {
+        web_wired u;
+        pad_state raw;
+        size_t b;
+        int fb = 1;
+        if (!w->cfg.wired(i, &u)) break;
+        if (!u.live) continue;
+        raw = u.st;
+        if (w->cfg.remap_apply) w->cfg.remap_apply(u.slot, &u.st);
+        PUT("%s{\"slot\":%d,\"profile\":\"%s\",\"vid\":\"%04x\",\"pid\":\"%04x\",\"addr\":\"%s\","
+            "\"usb\":true,\"vpad\":\"%s\",\"probe\":\"%s\",\"reports\":%ld,\"rid\":\"20\","
+            "\"battery\":%d,\"charging\":%s,\"lx\":%u,\"ly\":%u,\"rx\":%u,\"ry\":%u,"
+            "\"l2\":%u,\"r2\":%u,\"buttons\":[",
+            first ? "" : ",", u.slot + 1, u.name[0] ? u.name : "Xbox (USB)", u.vid, u.pid, u.node,
+            w->cfg.vpad_state ? w->cfg.vpad_state(u.slot) : "", w->cfg.probe_status ? w->cfg.probe_status(u.slot) : "",
+            u.reports,
+            u.st.has_battery ? u.st.battery_pct : -1, u.st.charging ? "true" : "false",
+            u.st.lx, u.st.ly, u.st.rx, u.st.ry, u.st.l2, u.st.r2);
+        for (b = 0; b < sizeof names / sizeof names[0]; b++)
+            if (u.st.buttons & names[b].bit) {
+                PUT("%s\"%s\"", fb ? "" : ",", names[b].name);
+                fb = 0;
+            }
+        PUT("],\"raw\":[");
+        for (b = 0, fb = 1; b < sizeof names / sizeof names[0]; b++)
+            if (raw.buttons & names[b].bit) {
+                PUT("%s\"%s\"", fb ? "" : ",", names[b].name);
+                fb = 0;
+            }
+        PUT("]}");
+        first = 0;
+    }
+    PUT("],\"wired\":[");
+    first = 1;
+    for (i = 0; w->cfg.wired && i < WEB_MAX_SLOTS; i++) {
+        web_wired u;
+        if (!w->cfg.wired(i, &u)) break;
+        PUT("%s{\"node\":\"%s\",\"vid\":\"%04x\",\"pid\":\"%04x\",\"name\":\"%s\",\"kind\":\"%s\",\"slot\":%d,"
+            "\"state\":\"%s\",\"reports\":%ld}",
+            first ? "" : ",", u.node, u.vid, u.pid, u.name, u.kind ? u.kind : "", u.slot + 1, u.state, u.reports);
         first = 0;
     }
     PUT("],\"paired\":[");
     first = 1;
     for (i = 0; h && i < host_paired_count(h); i++) {
         host_paired_info p;
+        char name[sizeof p.name];
         if (!host_paired_get(h, i, &p)) break;
         fmt_addr(a, p.addr);
-        PUT("%s{\"addr\":\"%s\",\"vid\":\"%04x\",\"pid\":\"%04x\",\"le\":%s,\"connected\":%s}",
-            first ? "" : ",", a, p.vid, p.pid, p.le ? "true" : "false",
+        json_text(name, sizeof name, p.name);
+        PUT("%s{\"addr\":\"%s\",\"name\":\"%s\",\"vid\":\"%04x\",\"pid\":\"%04x\",\"le\":%s,\"connected\":%s}",
+            first ? "" : ",", a, name, p.vid, p.pid, p.le ? "true" : "false",
             p.connected ? "true" : "false");
         first = 0;
     }
-    PUT("]}");
+    PUT("],\"found\":[");
+    first = 1;
+    for (i = 0; h && i < FOUND_LIST_MAX; i++) {
+        static const char *const block[] = { "", "dualsense", "console" };
+        host_found_info f;
+        char name[sizeof f.name];
+        if (!host_found_get(h, i, &f)) break;
+        fmt_addr(a, f.addr);
+        json_text(name, sizeof name, f.name);
+        PUT("%s{\"addr\":\"%s\",\"name\":\"%s\",\"le\":%s,\"rssi\":%d,\"pending\":%s,"
+            "\"block\":\"%s\",\"paired\":%s}",
+            first ? "" : ",", a, name, f.le ? "true" : "false", f.rssi,
+            f.name_pending ? "true" : "false",
+            block[f.block >= 0 && f.block <= 2 ? f.block : 0], f.paired ? "true" : "false");
+        first = 0;
+    }
+    PUT("],\"pick\":");
+    {
+        static const char *const state[] = { "", "checking", "pairing", "done", "failed" };
+        static const char *const why[] = { "", "no_answer", "collision", "dualsense", "failed", "refused" };
+        host_pick_info k;
+        char name[sizeof k.name];
+        if (h && host_pick_get(h, &k)) {
+            fmt_addr(a, k.addr);
+            json_text(name, sizeof name, k.name);
+            PUT("{\"addr\":\"%s\",\"name\":\"%s\",\"state\":\"%s\",\"why\":\"%s\",\"tries\":%d}",
+                a, name, state[k.state >= 0 && k.state <= 4 ? k.state : 0],
+                why[k.why >= 0 && k.why <= 5 ? k.why : 0], k.tries);
+        } else {
+            PUT("null");
+        }
+    }
+    PUT("}");
 #undef PUT
     respond(fd, 200, "application/json", out, n);
 }
@@ -270,7 +365,8 @@ static void handle(web_t *w, int fd, char *req)
         respond_text(fd, 400, "{\"error\":\"host\"}");
         return;
     }
-    if (strcmp(method, "GET") == 0 && (strcmp(path, "/") == 0 || strcmp(path, "/index.html") == 0)) {
+    if (strcmp(method, "GET") == 0 && (strcmp(path, "/") == 0 || strncmp(path, "/?", 2) == 0 ||
+                                       strncmp(path, "/index.html", 11) == 0)) {       /* any query ignored */
         respond(fd, 200, "text/html; charset=utf-8", (const char *)web_page_html, web_page_html_len);
         return;
     }
@@ -291,10 +387,31 @@ static void handle(web_t *w, int fd, char *req)
         api_state(w, fd);
     } else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/log") == 0) {
         api_log(w, fd);
+    } else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/log/clear") == 0) {
+        /* Emptied in place: the logger appends, so it carries on after this. */
+        FILE *f = fopen(w->cfg.log_path, "w");
+        if (f) fclose(f);
+        log_line("log cleared from the page");
+        respond_text(fd, f ? 200 : 500, f ? "{\"ok\":true}" : "{\"error\":\"log\"}");
     } else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/pair") == 0 && h) {
         host_pair(h, 60);
-        log_line("web: pairing started");
+        log_line("web: pairing search started");
         respond_text(fd, 200, "{\"ok\":true}");
+    } else if (strcmp(method, "POST") == 0 && strncmp(path, "/api/pair?addr=", 15) == 0 && h) {
+        /* The user picked a found pad; force=1 after confirming a warning. */
+        unsigned char a[6];
+        int r, force = strstr(path + 15, "&force=1") != NULL;
+        if (!parse_addr(path + 15, a)) {
+            respond_text(fd, 400, "{\"error\":\"address\"}");
+        } else if ((r = host_pair_addr(h, a, force)) == HOST_PAIR_STARTED) {
+            respond_text(fd, 200, "{\"ok\":true}");
+        } else if (r == HOST_PAIR_BLOCKED) {
+            respond_text(fd, 409, "{\"error\":\"blocked\"}");
+        } else if (r == HOST_PAIR_BUSY) {
+            respond_text(fd, 409, "{\"error\":\"busy\"}");
+        } else {
+            respond_text(fd, 404, "{\"error\":\"not found\"}");
+        }
     } else if (strcmp(method, "POST") == 0 && strncmp(path, "/api/forget?addr=", 17) == 0 && h) {
         unsigned char a[6];
         if (!parse_addr(path + 17, a)) respond_text(fd, 400, "{\"error\":\"address\"}");
@@ -302,9 +419,52 @@ static void handle(web_t *w, int fd, char *req)
         else respond_text(fd, 200, "{\"ok\":true}");
     } else if (strcmp(method, "POST") == 0 && strncmp(path, "/api/ps?slot=", 13) == 0) {
         int n = atoi(path + 13);
-        if (n < 1 || n > HOST_MAX_PADS) respond_text(fd, 400, "{\"error\":\"slot\"}");
+        if (n < 1 || n > WEB_MAX_SLOTS) respond_text(fd, 400, "{\"error\":\"slot\"}");
         else if (!w->cfg.press_ps || !w->cfg.press_ps(n - 1)) respond_text(fd, 404, "{\"error\":\"no pad\"}");
         else respond_text(fd, 200, "{\"ok\":true}");
+    } else if (strcmp(method, "POST") == 0 && strncmp(path, "/api/disconnect?slot=", 21) == 0 && h) {
+        int n = atoi(path + 21);
+        if (n < 1 || n > HOST_MAX_PADS) respond_text(fd, 400, "{\"error\":\"slot\"}");
+        else if (!host_disconnect(h, n - 1)) respond_text(fd, 404, "{\"error\":\"no pad\"}");
+        else respond_text(fd, 200, "{\"ok\":true}");
+    } else if (strcmp(method, "POST") == 0 && strncmp(path, "/api/probe?slot=", 16) == 0) {
+        int n = atoi(path + 16);
+        if (n < 1 || n > WEB_MAX_SLOTS) respond_text(fd, 400, "{\"error\":\"slot\"}");
+        else if (!w->cfg.probe || !w->cfg.probe(n - 1)) respond_text(fd, 404, "{\"error\":\"no pad or no such call\"}");
+        else respond_text(fd, 200, "{\"ok\":true}");
+    } else if (strcmp(method, "POST") == 0 && strncmp(path, "/api/rumble?slot=", 17) == 0) {
+        int n = atoi(path + 17);
+        if (n < 1 || n > WEB_MAX_SLOTS) respond_text(fd, 400, "{\"error\":\"slot\"}");
+        else if (!w->cfg.rumble || !w->cfg.rumble(n - 1)) respond_text(fd, 404, "{\"error\":\"no pad\"}");
+        else respond_text(fd, 200, "{\"ok\":true}");
+    } else if (strcmp(method, "GET") == 0 && strcmp(path, "/api/settings") == 0) {
+        char body[1024];
+        if (!w->cfg.settings_get || !w->cfg.settings_get(body, sizeof body)) respond_text(fd, 404, "{\"error\":\"no settings\"}");
+        else respond_text(fd, 200, body);
+    } else if (strcmp(method, "POST") == 0 && strncmp(path, "/api/settings?", 14) == 0) {
+        if (!w->cfg.settings_set || !w->cfg.settings_set(path + 14)) respond_text(fd, 400, "{\"error\":\"settings\"}");
+        else respond_text(fd, 200, "{\"ok\":true}");
+    } else if (strcmp(method, "GET") == 0 && strncmp(path, "/api/remap?slot=", 16) == 0) {
+        int n = atoi(path + 16);
+        char q[512], body[600];
+        if (n < 1 || n > WEB_MAX_SLOTS) respond_text(fd, 400, "{\"error\":\"slot\"}");
+        else if (!w->cfg.remap_get || !w->cfg.remap_get(n - 1, q, sizeof q)) respond_text(fd, 404, "{\"error\":\"no pad\"}");
+        else {
+            snprintf(body, sizeof body, "{\"slot\":%d,\"map\":\"%s\"}", n, q);
+            respond_text(fd, 200, body);
+        }
+    } else if (strcmp(method, "POST") == 0 && strncmp(path, "/api/remap?slot=", 16) == 0) {
+        /* ...&map=<one-line form>; "" or "m=" alone means the identity. */
+        int n = atoi(path + 16);
+        const char *m = strstr(path + 16, "&map=");
+        if (n < 1 || n > WEB_MAX_SLOTS || !m) respond_text(fd, 400, "{\"error\":\"slot\"}");
+        else if (!w->cfg.remap_set || !w->cfg.remap_set(n - 1, m + 5)) respond_text(fd, 400, "{\"error\":\"map\"}");
+        else respond_text(fd, 200, "{\"ok\":true}");
+    } else if (strcmp(method, "POST") == 0 && strncmp(path, "/api/bind?slot=", 15) == 0) {
+        int n = atoi(path + 15), r;
+        if (n < 1 || n > WEB_MAX_SLOTS) respond_text(fd, 400, "{\"error\":\"slot\"}");
+        else if (!w->cfg.rebind || !(r = w->cfg.rebind(n - 1))) respond_text(fd, 404, "{\"error\":\"nothing to retry\"}");
+        else respond_text(fd, 200, r == 1 ? "{\"ok\":true,\"bound\":true}" : "{\"ok\":true,\"bound\":false}");
     } else if (strcmp(method, "POST") == 0 && strcmp(path, "/api/retry") == 0) {
         if (*w->cfg.bt_state == WEB_BT_FAILED) {
             log_line("web: Bluetooth retry requested");

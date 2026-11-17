@@ -22,4 +22,7 @@
 /* Opens the controller. Returns 0 on failure, with the reason logged. */
 int hci_usb_open(hci_t *out);
 
+/* The device node the chip was found at ("" before hci_usb_open). */
+const char *hci_usb_node(void);
+
 #endif

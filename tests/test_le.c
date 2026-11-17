@@ -47,6 +47,21 @@ static void run(host_t *h, int ms)
     while (sim_le_now() < end) host_poll(h, 5);
 }
 
+/* Starts a search and picks the first pad it lists, as the user would on
+ * the page. Returns what host_pair_addr() said. */
+static int pick_first(host_t *h, int seconds)
+{
+    host_found_info f;
+    long end = sim_le_now() + 15000;
+
+    host_pair(h, seconds);
+    while (sim_le_now() < end) {
+        host_poll(h, 5);
+        if (host_found_get(h, 0, &f)) return host_pair_addr(h, f.addr, 0);
+    }
+    return HOST_PAIR_UNKNOWN;
+}
+
 static host_t *open_host(sim_le_t *sim, seen *s)
 {
     host_events ev = { on_connect, on_state, on_disconnect, s, NULL };
@@ -71,6 +86,7 @@ static void xbox_pad(sim_le_pad *p, int sc, int rpa)
     p->use_rpa = rpa;
     for (i = 0; i < 16; i++) p->irk[i] = (uint8_t)(0x90 + i);
     p->sc = sc;
+    p->battery = 77;
     p->vid = 0x045E;
     p->pid = 0x0B13;
     p->map[0] = 0x05;                   /* never read: the profile knows the pad */
@@ -98,7 +114,7 @@ static void test_xbox_sc(void)
     h = open_host(sim, &s);
     CHECK(h != NULL);
     if (!h) return;
-    host_pair(h, 30);
+    CHECK(pick_first(h, 30) == HOST_PAIR_STARTED);
     run(h, 8000);
 
     CHECK(sim_le_error(sim) == NULL);
@@ -108,6 +124,22 @@ static void test_xbox_sc(void)
     CHECK(s.connects == 1);
     CHECK(s.info.vid == 0x045E && s.info.pid == 0x0B13);
     CHECK(s.info.profile && strcmp(s.info.profile, "Xbox") == 0);
+    CHECK(s.last.has_battery && s.last.battery_pct == 77);     /* the Battery Service */
+
+    /* The pad asks for slower connection parameters to save power (as an
+     * ASUS pad did every 43 s on a console): answered at once, so the
+     * link-layer procedure cannot time out. A silly request is refused. */
+    {
+        uint8_t req[11] = { 0x06, 0x50, 0x00, 0x18, 0x00, 0x28, 0x00, 0x04, 0x00, 0x90, 0x01 };
+        sim_le_inject_event(sim, 0x3E, req, 11);
+        run(h, 500);
+        CHECK(sim_le_param_replies(sim) == 1);
+        req[3] = 0x01; req[4] = 0x00;           /* interval 1: below the minimum */
+        sim_le_inject_event(sim, 0x3E, req, 11);
+        run(h, 500);
+        CHECK(sim_le_param_replies(sim) == 2);
+        CHECK(s.connects == 1 && s.disconnects == 0);
+    }
     CHECK(s.states > 0);
     CHECK((s.last.buttons & 0x4000) && (s.last.buttons & 0x1));     /* cross, create */
     CHECK(s.last.lx == 0xFF && s.last.ly == 0x80);
@@ -128,6 +160,28 @@ static void test_xbox_sc(void)
     sim_le_free(sim);
 }
 
+static void test_refused_then_cancelled(void)
+{
+    sim_le_pad pad;
+    sim_le_t *sim;
+    host_t *h;
+    seen s;
+
+    printf("an LE connection the controller refuses (0x0c) is cancelled and tried again, spaced out\n");
+    unlink(DB);
+    memset(&s, 0, sizeof s);
+    xbox_pad(&pad, 1, 0);
+    pad.refuse_connects = 1;
+    sim = sim_le_new(&pad);
+    h = open_host(sim, &s);
+    CHECK(pick_first(h, 60) == HOST_PAIR_STARTED);
+    run(h, 20000);
+    CHECK(sim_le_cancels(sim) >= 1);
+    CHECK(s.connects == 1 && sim_le_paired(sim));
+    host_close(h);
+    sim_le_free(sim);
+}
+
 static void test_reconnect_rpa(void)
 {
     sim_le_pad pad;
@@ -141,7 +195,7 @@ static void test_reconnect_rpa(void)
     xbox_pad(&pad, 1, 1);
     sim = sim_le_new(&pad);
     h = open_host(sim, &s);
-    host_pair(h, 10);
+    CHECK(pick_first(h, 10) == HOST_PAIR_STARTED);
     run(h, 8000);
     CHECK(s.connects == 1 && sim_le_pairings(sim) == 1);
 
@@ -205,7 +259,7 @@ static void test_generic_legacy(void)
     pad.mtu = 23;
     sim = sim_le_new(&pad);
     h = open_host(sim, &s);
-    host_pair(h, 30);
+    CHECK(pick_first(h, 30) == HOST_PAIR_STARTED);
     run(h, 10000);
     CHECK(sim_le_error(sim) == NULL);
     if (sim_le_error(sim)) printf("  pad says: %s\n", sim_le_error(sim));
@@ -247,7 +301,7 @@ static void test_garbage(void)
     xbox_pad(&pad, 1, 0);
     sim = sim_le_new(&pad);
     h = open_host(sim, &s);
-    host_pair(h, 30);
+    CHECK(pick_first(h, 30) == HOST_PAIR_STARTED);
     run(h, 8000);
     CHECK(s.connects == 1);
     for (i = 0; i < 20000; i++) {
@@ -292,7 +346,7 @@ static int pair_once(int drop_every, unsigned seed)
         sim_le_free(sim);
         return 0;
     }
-    host_pair(h, 60);
+    CHECK(pick_first(h, 60) == HOST_PAIR_STARTED);
     run(h, 45000);
     ok = s.connects >= 1 && s.states > 0 && (s.last.buttons & 0x4000);
     if (!ok) printf("  seed %u: connects %d states %d pairings %d error %s\n", seed, s.connects,
@@ -316,6 +370,7 @@ static void test_stress(void)
 int main(void)
 {
     test_xbox_sc();
+    test_refused_then_cancelled();
     test_reconnect_rpa();
     test_generic_legacy();
     test_garbage();

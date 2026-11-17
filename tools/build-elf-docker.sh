@@ -1,7 +1,7 @@
 #!/bin/sh
-# Builds AnyPad PS5 without installing anything: the official PS5 payload SDK
+# Builds AnyACE without installing anything: the official PS5 payload SDK
 # (the release zip, unpacked) mounted read-only into a container with clang 18
-# and lld 18 for linux/amd64. The ELF is dist/AnyPad-PS5-<version>.elf, with the
+# and lld 18 for linux/amd64. The ELF is dist/AnyACE-PS5-<version>.elf, with the
 # version from src/version.h, and a .sha256 beside it.
 #
 #   tools/build-elf-docker.sh /path/to/ps5-payload-sdk [image]
@@ -14,10 +14,13 @@ IMAGE="${2:-anypad-build}"
 PROJ="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(sed -n 's/^#define ANYPAD_VERSION "\(.*\)"/\1/p' "$PROJ/src/version.h")"
 [ -n "$VERSION" ] || { echo "no version in src/version.h" >&2; exit 1; }
-OUT="dist/AnyPad-PS5-$VERSION.elf"
+OUT="dist/AnyACE-PS5-$VERSION.elf"
 mkdir -p "$PROJ/dist"
+# The sources are the SRCS list of ps5.mk, so both builds compile the same files.
+SRCS="$(sed -n '/^SRCS :=/,/[^\\]$/p' "$PROJ/ps5.mk" | sed 's/^SRCS :=//; s/\\//g' | tr -s ' \n' ' ')"
+[ -n "$SRCS" ] || { echo "no SRCS in ps5.mk" >&2; exit 1; }
 
-docker run --rm --platform linux/amd64 -e OUT="$OUT" \
+docker run --rm --platform linux/amd64 -e OUT="$OUT" -e SRCS="$SRCS" \
   -v "$SDK":/opt/ps5-payload-sdk-ro:ro -v "$PROJ":/work "$IMAGE" bash -c '
 set -e
 cp -r /opt/ps5-payload-sdk-ro /opt/ps5-payload-sdk
@@ -30,8 +33,9 @@ CC=$PS5_PAYLOAD_SDK/bin/prospero-clang
 cd /work
 rm -rf build/elf && mkdir -p build/elf
 OBJS=""
-for f in util log crc32 smp_crypto profiles generic host le web web_page config evstream hotkey lock netinfo usb_desc hci_usb ps5_power ps5_ui ps5_apps ps5_sysinfo launcher icon_data ps5_vpad ps5_main; do
-  $CC -std=c11 -Wall -Wextra -Werror -O2 -Isrc -c src/$f.c -o build/elf/$f.o
+for src in $SRCS; do
+  f=$(basename "$src" .c)
+  $CC -std=c11 -Wall -Wextra -Werror -O2 -Isrc -c "$src" -o build/elf/$f.o
   OBJS="$OBJS build/elf/$f.o"
 done
 $CC -o "$OUT" $OBJS -lScePad -lSceUserService -lSceSystemService -lSceAppInstUtil -ldl

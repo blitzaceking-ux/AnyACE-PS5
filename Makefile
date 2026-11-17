@@ -1,4 +1,4 @@
-# AnyPad PS5: Bluetooth game controllers on a jailbroken PS5.
+# AnyACE (based on AnyPad PS5): Bluetooth game controllers on a jailbroken PS5.
 #
 #   make test                 builds and runs the tests on this machine
 #   make ps5                  builds the payload (needs PS5_PAYLOAD_SDK)
@@ -67,11 +67,31 @@ src/icon_data.c: assets/icon0.png
 $(BUILD)/test_launcher: src/launcher.c src/icon_data.c tests/test_launcher.c | $(BUILD)
 	cc $(HOST_CFLAGS) -o $@ $^
 
+# XInput (Xbox 360 and the pads that imitate it) over USB.
+$(BUILD)/test_xinput: src/xinput.c tests/test_xinput.c | $(BUILD)
+	cc $(HOST_CFLAGS) -o $@ $^
+
+# The USB-only parts of HID pads.
+$(BUILD)/test_usb_quirks: src/usb_quirks.c tests/test_usb_quirks.c | $(BUILD)
+	cc $(HOST_CFLAGS) -o $@ $^
+
+# Per-pad remapping.
+$(BUILD)/test_remap: src/remap.c tests/test_remap.c | $(BUILD)
+	cc $(HOST_CFLAGS) -o $@ $^
+
+# The Xbox USB protocol: descriptors, messages and reports.
+$(BUILD)/test_gip: src/gip.c tests/test_gip.c | $(BUILD)
+	cc $(HOST_CFLAGS) -o $@ $^
+
 # Endpoints from the chip's descriptor (checked against a real dump) and event reassembly.
 $(BUILD)/test_usb: src/usb_desc.c src/evstream.c tests/test_usb.c | $(BUILD)
 	cc $(HOST_CFLAGS) -o $@ $^
 
-test: $(BUILD)/test_usb $(BUILD)/test_lock $(BUILD)/test_config $(BUILD)/test_vpad $(BUILD)/test_crypto $(BUILD)/test_profiles $(BUILD)/test_host $(BUILD)/test_le $(BUILD)/test_web $(BUILD)/test_launcher
+test: $(BUILD)/test_xinput $(BUILD)/test_usb_quirks $(BUILD)/test_remap $(BUILD)/test_gip $(BUILD)/test_usb $(BUILD)/test_lock $(BUILD)/test_config $(BUILD)/test_vpad $(BUILD)/test_crypto $(BUILD)/test_profiles $(BUILD)/test_host $(BUILD)/test_le $(BUILD)/test_web $(BUILD)/test_launcher
+	./$(BUILD)/test_xinput
+	./$(BUILD)/test_usb_quirks
+	./$(BUILD)/test_remap
+	./$(BUILD)/test_gip
 	./$(BUILD)/test_usb
 	./$(BUILD)/test_lock
 	./$(BUILD)/test_config
@@ -86,7 +106,7 @@ test: $(BUILD)/test_usb $(BUILD)/test_lock $(BUILD)/test_config $(BUILD)/test_vp
 # Malformed input through every parser, under the sanitizers.
 SAN := -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
 fuzz: | $(BUILD)
-	cc $(HOST_CFLAGS) $(SAN) -o $(BUILD)/test_fuzz $(CORE) tests/test_fuzz.c
+	cc $(HOST_CFLAGS) $(SAN) -o $(BUILD)/test_fuzz $(CORE) src/gip.c src/remap.c src/xinput.c src/usb_quirks.c tests/test_fuzz.c
 	./$(BUILD)/test_fuzz
 
 # ---- the console payload ----------------------------------------------------
@@ -98,7 +118,7 @@ endif
 	$(MAKE) -f ps5.mk
 
 send: ps5
-	$(PS5_PAYLOAD_SDK)/bin/prospero-deploy -h $(PS5_HOST) -p $(PS5_PORT) dist/AnyPad-PS5-*.elf
+	$(PS5_PAYLOAD_SDK)/bin/prospero-deploy -h $(PS5_HOST) -p $(PS5_PORT) dist/AnyACE-PS5-*.elf
 
 clean:
 	rm -rf $(BUILD)

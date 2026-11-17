@@ -1,4 +1,5 @@
 #include "profiles.h"
+#include "log.h"
 #include "crc32.h"
 #include "util.h"
 
@@ -349,6 +350,80 @@ static int xbox_output(void *ctx, const pad_output *o, uint8_t *b, int max)
     return 9;
 }
 
+/* ---- DualShock 3 (over USB) -------------------------------------------------
+ *
+ *   0x01 (49 bytes): [2] select L3 R3 start up right down left
+ *                    [3] L2 R2 L1 R1 triangle circle cross square
+ *                    [4] PS  [6..9] sticks  [18] L2 pressure  [19] R2 pressure
+ *                    [30] battery: 0..5 levels, 0xEE charging, 0xEF charged
+ *   output 0x01 (36 bytes), as hid-sony sends it: [3] small motor on/off,
+ *                    [5] big motor 0..255, [10] player lights bitmap
+ */
+static const uint16_t ds3_ids[][2] = {
+    { 0x054C, 0x0268 },     /* DualShock 3, Sixaxis */
+};
+
+static int ds3_parse(void *ctx, const uint8_t *r, int n, pad_state *st)
+{
+    uint32_t b = 0;
+
+    (void)ctx;
+    if (r[0] != 0x01 || n < 20) return PARSE_NONE;
+    if (r[2] & 0x01) b |= PAD_CREATE;
+    if (r[2] & 0x02) b |= PAD_L3;
+    if (r[2] & 0x04) b |= PAD_R3;
+    if (r[2] & 0x08) b |= PAD_OPTIONS;
+    if (r[2] & 0x10) b |= PAD_UP;
+    if (r[2] & 0x20) b |= PAD_RIGHT;
+    if (r[2] & 0x40) b |= PAD_DOWN;
+    if (r[2] & 0x80) b |= PAD_LEFT;
+    if (r[3] & 0x01) b |= PAD_L2;
+    if (r[3] & 0x02) b |= PAD_R2;
+    if (r[3] & 0x04) b |= PAD_L1;
+    if (r[3] & 0x08) b |= PAD_R1;
+    if (r[3] & 0x10) b |= PAD_TRIANGLE;
+    if (r[3] & 0x20) b |= PAD_CIRCLE;
+    if (r[3] & 0x40) b |= PAD_CROSS;
+    if (r[3] & 0x80) b |= PAD_SQUARE;
+    if (r[4] & 0x01) b |= PAD_PS;
+    st->buttons = b;
+    st->lx = r[6];
+    st->ly = r[7];
+    st->rx = r[8];
+    st->ry = r[9];
+    st->l2 = r[18];
+    st->r2 = r[19];
+    if (n >= 31) {
+        unsigned v = r[30];
+        st->has_battery = 1;
+        st->charging = (uint8_t)(v == 0xEE || v == 0xEF);
+        st->battery_pct = (uint8_t)(v >= 0xEE ? 100 : v > 5 ? 100 : v * 20);
+    }
+    return PARSE_OK;
+}
+
+static int ds3_output(void *ctx, const pad_output *o, uint8_t *b, int max)
+{
+    static const uint8_t base[36] = {
+        0x01,
+        0x00, 0xFF, 0x00, 0xFF, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00,
+        0xFF, 0x27, 0x10, 0x00, 0x32,
+        0xFF, 0x27, 0x10, 0x00, 0x32,
+        0xFF, 0x27, 0x10, 0x00, 0x32,
+        0xFF, 0x27, 0x10, 0x00, 0x32,
+        0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+
+    (void)ctx;
+    if (max < 36) return 0;
+    memcpy(b, base, 36);
+    b[3] = o->weak ? 1 : 0;             /* the small motor is on or off */
+    b[5] = o->strong;
+    b[10] = (uint8_t)(0x02 << ((o->player ? o->player : 1) - 1) & 0x1E);
+    return 36;
+}
+
 /* ---- Nintendo Switch Pro Controller and compatibles -------------------------
  *
  * Starts in a simple HID mode (report 0x3F) and moves to the standard full
@@ -380,7 +455,14 @@ static const uint16_t switch_ids[][2] = {
 
 typedef struct {
     uint8_t counter;
+    uint8_t rounds;                 /* wake-up rounds started */
 } switch_ctx;
+
+/* Rounds of asking for the full report before giving up on it. Some pads
+ * that imitate a Switch Pro (8BitDo in Switch mode) take the request and
+ * then send nothing at all, so the last round puts them back into the
+ * simple report 0x3F, which has every button and both sticks. */
+#define SWITCH_FULL_ROUNDS 4
 
 /* Stick travel from centre the raw values usually reach; factory
  * calibration (SPI flash) is not read yet. */
@@ -490,13 +572,54 @@ static int switch_subcmd(switch_ctx *c, uint8_t id, const uint8_t *arg, int alen
     return 11 + alen;
 }
 
+/* HD rumble, both sides the same: a 320 Hz high band and a 160 Hz low band
+ * at one amplitude, the encoding from the community's reverse engineering
+ * (hf = (enc_freq - 0x60) * 2, lf = enc_freq - 0x40, hf_amp = enc_amp * 2,
+ * lf_amp = enc_amp / 2 + 0x40). enc_amp for amplitudes 1/8 .. 8/8. */
+static void switch_rumble4(uint8_t amp, uint8_t b[4])
+{
+    static const uint8_t enc[8] = { 16, 36, 54, 68, 78, 86, 94, 100 };
+    unsigned e, lf_amp;
+
+    if (amp == 0) {
+        b[0] = 0x00; b[1] = 0x01; b[2] = 0x40; b[3] = 0x40;     /* neutral */
+        return;
+    }
+    e = enc[(amp - 1) * 8 / 255];
+    lf_amp = e / 2 + 0x40;
+    b[0] = 0x80;                        /* hf 320 Hz, low byte */
+    b[1] = (uint8_t)(e * 2);            /* hf_amp, hf high byte 0 */
+    b[2] = 0x40;                        /* lf 160 Hz, lf_amp high byte 0 */
+    b[3] = (uint8_t)lf_amp;
+}
+
+static int switch_output(void *ctx, const pad_output *o, uint8_t *b, int max)
+{
+    switch_ctx *c = ctx;
+    uint8_t amp = o->strong > o->weak ? o->strong : o->weak;
+
+    if (max < 10) return 0;
+    b[0] = 0x10;                        /* rumble only */
+    b[1] = c->counter++ & 0x0F;
+    switch_rumble4(amp, b + 2);
+    switch_rumble4(amp, b + 6);
+    return 10;
+}
+
 static int switch_init(void *ctx, int step, const pad_output *o, uint8_t *b, int max)
 {
     static const uint8_t full_mode[1] = { 0x30 };
+    static const uint8_t simple_mode[1] = { 0x3F };
     static const uint8_t on[1] = { 0x01 };
     uint8_t leds[1];
     switch_ctx *c = ctx;
 
+    if (step == 0) c->rounds++;
+    if (c->rounds > SWITCH_FULL_ROUNDS) {
+        if (step != 0) return 0;
+        log_line("switch pad: never took the full report, asking for the simple one back");
+        return switch_subcmd(c, 0x03, simple_mode, 1, b, max);
+    }
     switch (step) {
     case 0: return switch_subcmd(c, 0x03, full_mode, 1, b, max);   /* report mode */
     case 1: return switch_subcmd(c, 0x40, on, 1, b, max);          /* IMU on */
@@ -517,7 +640,8 @@ static const pad_profile k_profiles[] = {
     { "DualShock 4", IDS(ds4_ids),    ds4_parse,    ds4_output,  ds4_init,    1, 0, NULL },
     { "DualSense",   IDS(ds5_ids),    ds5_parse,    ds5_output,  ds5_init,    1, 0, NULL },
     { "Xbox",        IDS(xbox_ids),   xbox_parse,   xbox_output, NULL,        0, 0, xbox_setup },
-    { "Switch Pro",  IDS(switch_ids), switch_parse, NULL,        switch_init, 1, 0, NULL },
+    { "Switch Pro",  IDS(switch_ids), switch_parse, switch_output, switch_init, 1, 250, NULL },
+    { "DualShock 3", IDS(ds3_ids),    ds3_parse,    ds3_output,  NULL,        0, 0, NULL },
 };
 
 const pad_profile *profile_find(uint16_t vid, uint16_t pid)

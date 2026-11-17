@@ -16,7 +16,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#define NODE        "/dev/ugen0.2"
+#define NODE        "/dev/ugen0.2"     /* where the chip is on a PS5 fat; looked for elsewhere if not */
+static char g_node[32];
 
 /* The endpoints are read from the chip's configuration descriptor. These are
  * a layout used only if the descriptor cannot be read: on a PS5 fat with
@@ -457,6 +458,58 @@ static const hci_ops k_usb_ops = {
     op_cmd, op_acl_send, op_pump, op_next_event, op_next_acl, op_close, op_diag,
 };
 
+/* Does this open node carry an HCI function (a Bluetooth chip)? */
+static int node_is_bluetooth(int fd)
+{
+    struct usb_gen_descriptor gd;
+    unsigned char cfg[512];
+    hci_function f[HCI_FUNCTIONS_MAX];
+
+    memset(&gd, 0, sizeof gd);
+    gd.ugd_data = cfg;
+    gd.ugd_maxlen = sizeof cfg;
+    gd.ugd_config_index = 0xFF;
+    if (ioctl(fd, USB_GET_FULL_DESC, &gd) != 0) return 0;
+    return usb_find_hci_functions(cfg, gd.ugd_actlen < (int)sizeof cfg ? gd.ugd_actlen : (int)sizeof cfg, f) > 0;
+}
+
+/* Opens the chip: at its usual node, or wherever a device with an HCI
+ * function is found (other console models may number it differently).
+ * Returns the fd, with g_node set, or -1. */
+static int open_chip(void)
+{
+    int bus, unit, fd;
+
+    fd = open(NODE, O_RDWR);
+    if (fd >= 0 && node_is_bluetooth(fd)) {
+        snprintf(g_node, sizeof g_node, "%s", NODE);
+        return fd;
+    }
+    if (fd >= 0) {
+        log_line("usb: %s is not a Bluetooth chip here, looking elsewhere", NODE);
+        close(fd);
+    } else {
+        log_line("usb: open %s: errno %d; looking elsewhere", NODE, errno);
+    }
+    for (bus = 0; bus < 8; bus++)
+        for (unit = 1; unit < 16; unit++) {
+            snprintf(g_node, sizeof g_node, "/dev/ugen%d.%d", bus, unit);
+            if (strcmp(g_node, NODE) == 0 || access(g_node, F_OK) != 0) continue;
+            fd = open(g_node, O_RDWR);
+            if (fd < 0) continue;
+            if (node_is_bluetooth(fd)) {
+                log_line("usb: Bluetooth chip found at %s", g_node);
+                return fd;
+            }
+            close(fd);
+        }
+    g_node[0] = '\0';
+    log_line("usb: no Bluetooth chip found on any device node");
+    return -1;
+}
+
+const char *hci_usb_node(void) { return g_node; }
+
 int hci_usb_open(hci_t *out)
 {
     usb_ctx *c = &g_ctx;
@@ -464,15 +517,12 @@ int hci_usb_open(hci_t *out)
     int i;
 
     memset(c, 0, sizeof *c);
-    c->fd = open(NODE, O_RDWR);
-    if (c->fd < 0) {
-        log_line("usb: open %s: errno %d", NODE, errno);
-        return 0;
-    }
+    c->fd = open_chip();
+    if (c->fd < 0) return 0;
 
     c->dd_ok = ioctl(c->fd, USB_GET_DEVICE_DESC, &c->dd) == 0;
     if (c->dd_ok)
-        log_line("usb: %s is %04x:%04x", NODE, UGETW(c->dd.idVendor), UGETW(c->dd.idProduct));
+        log_line("usb: %s is %04x:%04x", g_node, UGETW(c->dd.idVendor), UGETW(c->dd.idProduct));
     choose_endpoints(c);
     evstream_init(&c->es);
 

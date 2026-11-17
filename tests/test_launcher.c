@@ -35,7 +35,7 @@ int main(void)
     printf("param.json carries the id, the name and the deep link\n");
     n = launcher_param_json(param, sizeof param);
     CHECK(n > 0 && strstr(param, "\"titleId\": \"ANYP00001\"") && strstr(param, "\"deeplinkUri\": \"http://127.0.0.1:8095/\"") &&
-          strstr(param, "\"titleName\": \"AnyPad\"") && strstr(param, "65536"));
+          strstr(param, "\"titleName\": \"AnyACE\"") && strstr(param, "65536"));
     CHECK(launcher_param_json(param, 20) == -1);
 
     printf("first write creates both files\n");

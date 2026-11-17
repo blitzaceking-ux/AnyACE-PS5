@@ -1,125 +1,462 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AnyPad PS5</title>
+<title>AnyACE</title>
 <style>
+/* AnyACE: a dark stage lit by the three console colours of the icon. Each
+   player slot carries the light bar colour AnyACE gives that pad. */
 :root {
-  --bg: #121212; --panel: #1c1c1c; --line: #2c2c2c; --text: #f2f2f2; --dim: #9a9a9a;
-  --blue: #2f7df6; --orange: #ff8a00; --orange-dim: #7a4300; --ok: #43c46b; --bad: #ff5a4f;
+  --stage: #06080e; --panel: #0d111b; --raised: #141a28; --line: #1f2738;
+  --text: #eef2fa; --dim: #8892a6; --faint: #4a5368;
+  --p1: #2f7bff; --p2: #ff3d4d; --p3: #3bdb6b; --p4: #ff4fb8;
+  --accent: var(--p1); --bad: #ff5a5f; --warn-bg: rgba(255, 61, 77, .08);
+  --radius: 16px;
+  --display: "SF Pro Display", "Segoe UI Variable Display", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text);
-  font: 15px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-header { display: flex; align-items: center; gap: 12px; padding: 14px 16px;
-  border-bottom: 2px solid var(--orange); background: #181818; position: sticky; top: 0; }
-header h1 { margin: 0; font-size: 20px; letter-spacing: .5px; }
-header h1 span { color: var(--orange); }
-#ver { color: var(--dim); font-size: 12px; }
-#status { margin-left: auto; font-size: 13px; padding: 3px 10px; border-radius: 99px;
-  border: 1px solid var(--line); color: var(--dim); }
-#status.on { border-color: var(--ok); color: var(--ok); }
-#status.off { border-color: var(--bad); color: var(--bad); }
-main { max-width: 960px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
-section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
-section h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--orange); }
+html { background: var(--stage); }
+body { margin: 0; min-height: 100vh; color: var(--text); font: 16px/1.5 var(--body);
+  background:
+    radial-gradient(60% 40% at 15% -5%, rgba(59, 219, 107, .10), transparent 70%),
+    radial-gradient(60% 40% at 85% -5%, rgba(255, 61, 77, .10), transparent 70%),
+    radial-gradient(70% 50% at 50% 0%, rgba(47, 123, 255, .16), transparent 70%),
+    var(--stage);
+  background-repeat: no-repeat; }
+
+/* ---- header ---- */
+header { display: flex; align-items: center; gap: 14px; max-width: 1080px; margin: 0 auto; padding: 22px 20px 6px; }
+.mark { display: flex; gap: 4px; }
+.mark i { width: 8px; height: 22px; border-radius: 4px; }
+.mark i:nth-child(1) { background: var(--p3); box-shadow: 0 0 12px var(--p3); }
+.mark i:nth-child(2) { background: var(--p1); box-shadow: 0 0 12px var(--p1); height: 28px; margin-top: -3px; }
+.mark i:nth-child(3) { background: var(--p2); box-shadow: 0 0 12px var(--p2); }
+h1 { margin: 0; font: 800 26px/1 var(--display); letter-spacing: -.02em; }
+#ver { color: var(--faint); font: 12px var(--mono); }
+#status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--dim);
+  padding: 6px 12px; border: 1px solid var(--line); border-radius: 99px; background: rgba(13, 17, 27, .7); }
+#status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+#status.on { color: var(--text); }
+#status.on::before { background: var(--p3); box-shadow: 0 0 8px var(--p3); }
+#status.off::before { background: var(--bad); }
+
+main { max-width: 1080px; margin: 0 auto; padding: 14px 20px 48px; display: grid; gap: 18px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+h2 { margin: 0 0 4px; font: 700 20px/1.2 var(--display); letter-spacing: -.01em; }
+.sub { margin: 0; color: var(--dim); font-size: 14px; }
+.head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.count { color: var(--faint); font: 13px var(--mono); white-space: nowrap; }
+
+/* ---- buttons ---- */
+button { font: 600 15px var(--body); min-height: 44px; padding: 0 18px; border-radius: 12px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--raised); color: var(--text);
+  transition: transform .12s ease, background-color .12s ease, border-color .12s ease; }
+button:hover:not(:disabled) { border-color: var(--faint); }
+button:active:not(:disabled) { transform: scale(.97); }
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover:not(:disabled) { background: #4a8dff; border-color: #4a8dff; }
+button.ps { background: rgba(47, 123, 255, .14); border-color: rgba(47, 123, 255, .5); color: #9cc0ff; }
+button.danger { background: transparent; border-color: rgba(255, 90, 95, .45); color: var(--bad); }
+button.ghost { background: transparent; }
 .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-button { font: inherit; border: 1px solid var(--orange); background: transparent; color: var(--orange);
-  padding: 8px 14px; border-radius: 8px; cursor: pointer; }
-button.solid { background: var(--orange); color: #111; font-weight: 600; }
-button.danger { border-color: var(--bad); color: var(--bad); }
-button.blue { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 600; }
-button:disabled { opacity: .5; cursor: default; }
+
+/* ---- pairing: the search ring ---- */
+.pairing { display: grid; grid-template-columns: auto 1fr; gap: 22px; align-items: center; }
+.ring { position: relative; width: 116px; height: 116px; }
+.ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 7; }
+.ring .track { stroke: var(--line); }
+.ring .left { stroke: url(#tri); stroke-linecap: round; stroke-dasharray: 327; transition: stroke-dashoffset .9s linear; }
+.ring .num { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+.ring .num b { font: 800 30px/1 var(--display); letter-spacing: -.03em; }
+.ring .num span { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .12em; margin-top: 4px; }
+.ring.idle .num b { font-size: 15px; font-weight: 700; color: var(--dim); letter-spacing: 0; }
+.ring.searching svg { filter: drop-shadow(0 0 10px rgba(47, 123, 255, .45)); }
+#pairinfo { margin: 6px 0 14px; color: var(--dim); font-size: 14px; }
+
+/* ---- found pads ---- */
+#found { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 8px; }
+#found li { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-radius: 12px;
+  background: var(--raised); border: 1px solid var(--line); }
+#found li.blocked { background: var(--warn-bg); border-color: rgba(255, 61, 77, .35); }
+#found .who { flex: 1; min-width: 0; }
+#found .name { font-weight: 650; overflow-wrap: anywhere; }
+#found .meta { color: var(--dim); font: 12px var(--mono); margin-top: 2px; }
+#found .warn { color: #ff9ea2; font-size: 13px; margin-top: 6px; }
+#found .waiting { color: var(--dim); font-size: 14px; padding: 10px 2px; background: none; border: 0; }
+#pick { margin: 14px 0 0; padding: 12px 14px; border-radius: 12px; font-size: 14px; border: 1px solid var(--line); background: var(--raised); }
+#pick[hidden] { display: none; }
+#pick.pairing { border-color: rgba(47, 123, 255, .5); }
+#pick.done { border-color: rgba(59, 219, 107, .5); }
+#pick.failed { border-color: rgba(255, 61, 77, .45); background: var(--warn-bg); }
+#pick b { display: block; margin-bottom: 2px; }
+#pick span { color: var(--dim); }
+.tag { display: inline-block; font: 600 10px/1 var(--body); letter-spacing: .08em; text-transform: uppercase;
+  padding: 4px 6px; margin-left: 8px; border-radius: 6px; background: var(--line); color: var(--dim); vertical-align: 2px; }
+.bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; margin-right: 8px; vertical-align: -2px; }
+.bars i { width: 3px; border-radius: 1px; background: var(--line); }
+.bars i:nth-child(1) { height: 4px; } .bars i:nth-child(2) { height: 7px; }
+.bars i:nth-child(3) { height: 10px; } .bars i:nth-child(4) { height: 14px; }
+.bars i.on { background: var(--p3); }
+
+details { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+summary { cursor: pointer; color: var(--text); font-weight: 600; font-size: 14px; list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: "›"; display: inline-block; width: 16px; color: var(--accent); transition: transform .15s ease; }
+details[open] summary::before { transform: rotate(90deg); }
+summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+details ol { margin: 10px 0 0; padding-left: 22px; color: var(--dim); font-size: 14px; }
+details li { margin-bottom: 6px; }
+details b { color: var(--text); }
+
+/* ---- players: four slots, each with its light bar colour ---- */
+#pads { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+.slot { --c: var(--p1); position: relative; border-radius: 14px; padding: 16px 14px 12px; background: var(--raised);
+  border: 1px solid var(--line); overflow: hidden; min-height: 200px; }
+.slot:nth-child(2) { --c: var(--p2); } .slot:nth-child(3) { --c: var(--p3); } .slot:nth-child(4) { --c: var(--p4); }
+.slot::before { content: ""; position: absolute; top: 0; left: 18%; right: 18%; height: 4px; border-radius: 0 0 4px 4px;
+  background: var(--c); box-shadow: 0 0 18px 2px var(--c); }
+.slot.free { background: transparent; border-style: dashed; display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 10px; min-height: 0; padding: 22px 14px; }
+.slot.free::before { opacity: .18; box-shadow: none; }
+.slot .p { font: 800 13px var(--display); letter-spacing: .12em; color: var(--c); }
+.slot.free .p { color: var(--faint); }
+.slot.free .hint { color: var(--faint); font-size: 13px; }
+.slot .head { display: flex; align-items: center; justify-content: flex-start; gap: 10px; margin-bottom: 0; }
+.slot .head .p { padding: 3px 8px; border-radius: 6px; background: var(--c); color: #05070c; }
+.slot .head .pname { margin: 0; }
+.slot .pname { font: 700 16px/1.25 var(--display); margin: 6px 0 2px; }
+.slot .meta { color: var(--dim); font: 11px var(--mono); }
+.viz { display: flex; gap: 10px; align-items: center; justify-content: center; margin: 12px 0 8px; }
+.stick { width: 46px; height: 46px; border-radius: 50%; border: 2px solid var(--line); position: relative; background: var(--panel); }
+.stick i { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--c); box-shadow: 0 0 8px var(--c); }
+.trig { width: 8px; height: 46px; border-radius: 4px; background: var(--panel); border: 1px solid var(--line); position: relative; overflow: hidden; }
+.trig b { position: absolute; bottom: 0; left: 0; right: 0; background: var(--c); }
+.btns { display: flex; flex-wrap: wrap; gap: 4px; min-height: 22px; justify-content: center; }
+.btns span { font: 600 11px var(--body); padding: 3px 7px; border-radius: 6px; background: var(--c); color: #05070c; }
+.batt { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--dim); font: 11px var(--mono); }
+.batt div { flex: 1; height: 5px; border-radius: 3px; background: var(--panel); overflow: hidden; }
+.batt b { display: block; height: 100%; background: var(--p3); }
+.slot .ps { width: 100%; margin-top: 12px; }
+
+/* ---- paired list ---- */
+#paired { list-style: none; margin: 0; padding: 0; }
+#paired li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+#paired li:first-child { border-top: 0; }
+#paired .addr { font: 14px var(--mono); }
+#paired .ids { color: var(--dim); font: 12px var(--mono); flex: 1; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line); flex: none; }
+.dot.on { background: var(--p3); box-shadow: 0 0 8px var(--p3); }
+.empty { color: var(--dim); font-size: 14px; }
+
+#btfail { border-color: rgba(255, 90, 95, .45); background: var(--warn-bg); }
+#btreason { color: #ffb3b6; font-size: 14px; margin: 6px 0 14px; }
 .hint { color: var(--dim); font-size: 13px; }
-.pads { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
-.pad { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #161616; }
-.pad .top { display: flex; justify-content: space-between; align-items: baseline; }
-.pad .name { font-weight: 600; }
-.pad .slot { color: #111; background: var(--orange); border-radius: 6px; padding: 1px 8px; font-size: 12px; font-weight: 700; }
-.pad .meta { color: var(--dim); font-size: 12px; margin: 2px 0 10px; }
-.viz { display: flex; gap: 14px; align-items: center; }
-.stick { width: 64px; height: 64px; border-radius: 50%; border: 2px solid var(--line); position: relative; }
-.stick i { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--orange); }
-.trig { width: 10px; height: 64px; border: 1px solid var(--line); border-radius: 4px; position: relative; overflow: hidden; }
-.trig b { position: absolute; bottom: 0; left: 0; right: 0; background: var(--orange); }
-.btns { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; min-height: 24px; }
-.btns span { font-size: 11px; padding: 2px 7px; border-radius: 99px; background: var(--orange-dim); color: #ffd3a1; }
-.batt { margin-top: 10px; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
-.batt b { display: block; height: 100%; background: var(--ok); }
-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-td { padding: 8px 4px; border-top: 1px solid var(--line); }
-td.r { text-align: right; }
-.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--line); margin-right: 6px; }
-.dot.on { background: var(--ok); }
-pre { margin: 10px 0 0; max-height: 320px; overflow: auto; font-size: 12px; color: #d8d8d8;
-  background: #0d0d0d; border: 1px solid var(--line); border-radius: 8px; padding: 10px; white-space: pre-wrap; }
-.empty { color: var(--dim); font-size: 14px; padding: 6px 0; }
+pre { margin: 14px 0 0; max-height: 360px; overflow: auto; font: 12px/1.5 var(--mono); color: #c9d1e3;
+  background: #04060b; border: 1px solid var(--line); border-radius: 12px; padding: 12px; white-space: pre-wrap; }
+.danger-zone { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+
+/* ---- button test: the pad as the console sees it ---- */
+.slot .acts { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 12px; }
+.slot .acts button { min-height: 36px; padding: 0 6px; font-size: 13px; border-radius: 9px; }
+.slot .acts2 { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-top: 6px; }
+.slot .acts2 button { min-height: 40px; }
+.slot .acts2 .ps { width: auto; margin: 0; }
+.slot .pname { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 0; }
+.slot .own { color: var(--dim); font-size: 13px; margin: 6px 0 0; }
+#paired .name { font-weight: 650; }
+#paired .ids { display: block; }
+.slot .vp { margin-top: 10px; font-size: 12px; color: var(--dim); }
+.slot .vp.bad { color: #ff9ea2; }
+.slot .vp b { display: block; color: var(--text); }
+.slot .vp.bad b { color: #ff9ea2; }
+.slot.usb { --c: #ffb020; }
+.slot.usb:nth-child(6) { --c: #22d3ee; }
+.slot.usb:nth-child(7) { --c: #a78bfa; }
+.slot.usb:nth-child(8) { --c: #f472b6; }
+#wired { list-style: none; margin: 0; padding: 0; }
+#wired li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+#wired li:first-child { border-top: 0; }
+#wired .who { flex: 1; min-width: 0; }
+#wired .name { font-weight: 650; }
+#wired .meta { color: var(--dim); font: 12px var(--mono); margin-top: 2px; }
+#wired .st { font-size: 12px; padding: 4px 10px; border-radius: 99px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+#wired .st.live { border-color: rgba(59, 219, 107, .5); color: var(--p3); }
+#wired .st.starting { border-color: rgba(255, 176, 32, .5); color: #ffb020; }
+.slot .acts button { flex: 1 1 auto; padding: 0 10px; }
+#tester { position: fixed; inset: 0; z-index: 10; display: flex; align-items: flex-start; justify-content: center;
+  padding: 24px 16px; overflow-y: auto; background: rgba(4, 6, 11, .82); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+#tester[hidden] { display: none; }
+.tpanel { --c: var(--p1); width: 100%; max-width: 860px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 20px; padding: 20px; position: relative; overflow: hidden; }
+.tpanel::before { content: ""; position: absolute; top: 0; left: 30%; right: 30%; height: 4px; border-radius: 0 0 4px 4px;
+  background: var(--c); box-shadow: 0 0 24px 4px var(--c); }
+.thead { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
+.thead .p { font: 800 13px var(--display); letter-spacing: .12em; color: var(--c); }
+.thead h2 { margin-top: 2px; }
+.thead button { margin-left: auto; }
+#tgone { margin: 8px 0; padding: 10px 12px; border-radius: 10px; background: var(--warn-bg); color: #ffb3b6; font-size: 14px; }
+.pad-svg { width: 100%; max-width: 640px; display: block; margin: 6px auto 0; }
+.pad-svg .body { fill: var(--raised); stroke: var(--line); stroke-width: 2; }
+.pad-svg .k { fill: var(--panel); stroke: var(--faint); stroke-width: 1.5; transition: fill .06s linear; }
+.pad-svg .k.on { fill: var(--c); stroke: var(--c); filter: drop-shadow(0 0 8px var(--c)); }
+.pad-svg .lbl { fill: var(--dim); font: 700 13px var(--body); text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.pad-svg .k.on + .lbl { fill: #05070c; }
+.pad-svg .base { fill: var(--panel); stroke: var(--faint); stroke-width: 1.5; }
+.pad-svg .base.on { stroke: var(--c); stroke-width: 4; }
+.pad-svg .range { fill: none; stroke: var(--c); stroke-opacity: .35; stroke-width: 1.5; stroke-dasharray: 3 3; }
+.pad-svg .cap { fill: var(--c); filter: drop-shadow(0 0 6px var(--c)); }
+.pad-svg .trk { fill: var(--panel); stroke: var(--faint); stroke-width: 1.5; }
+.pad-svg .tfill { fill: var(--c); }
+.tgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 14px; }
+.tread { background: var(--raised); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.tread .h { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+.tread .v { font: 600 15px var(--mono); margin-top: 2px; }
+.tread .ok { color: var(--dim); font-size: 12px; margin-top: 2px; min-height: 18px; }
+.tread .ok.yes { color: var(--p3); }
+.tcheck { margin-top: 16px; }
+.tcheck .head { margin-bottom: 8px; }
+#tchips { display: flex; flex-wrap: wrap; gap: 6px; }
+#tchips span { font: 600 12px var(--body); padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); color: var(--dim); }
+#tchips span.done { border-color: var(--c); color: var(--text); }
+#tchips span.done::before { content: "✓ "; color: var(--c); }
+#tchips span.now { background: var(--c); border-color: var(--c); color: #05070c; }
+#tchips span.now::before { color: #05070c; }
+/* ---- settings ---- */
+.setrow { display: grid; grid-template-columns: 180px 1fr; gap: 10px; align-items: start; padding: 12px 0; border-top: 1px solid var(--line); }
+.setrow:first-of-type { border-top: 0; }
+.setname { font-weight: 650; padding-top: 6px; }
+.radios { display: flex; flex-direction: column; gap: 8px; }
+.radios label { display: flex; align-items: center; gap: 10px; min-height: 36px; cursor: pointer; }
+.radios input { width: 20px; height: 20px; accent-color: var(--p1); }
+@media (max-width: 560px) { .setrow { grid-template-columns: 1fr; gap: 6px; } }
+
+/* ---- remap editor ---- */
+.rrows { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; margin-top: 14px; }
+.rrow { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--raised); border: 1px solid var(--line); }
+.rrow.now { border-color: var(--c); box-shadow: 0 0 0 1px var(--c) inset; }
+.rrow .src { width: 92px; font-weight: 650; }
+.rrow .arrow { color: var(--faint); }
+.rrow select { flex: 1; font: inherit; min-height: 36px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 0 8px; }
+.rrow select.changed { border-color: var(--c); color: var(--c); }
+.ropts { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; color: var(--dim); font-size: 14px; }
+.ropts label { display: flex; align-items: center; gap: 6px; }
+.ropts input { width: 18px; height: 18px; accent-color: var(--c); }
+.ractions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; align-items: center; }
+#rstatus { color: var(--dim); font-size: 13px; }
+#remapper { position: fixed; inset: 0; z-index: 11; display: flex; align-items: flex-start; justify-content: center; padding: 24px 16px; overflow-y: auto; background: rgba(4, 6, 11, .82); }
+#remapper[hidden] { display: none; }
+@media (max-width: 560px) {
+  .rrows { grid-template-columns: 1fr; }
+  .tgrid { grid-template-columns: 1fr 1fr; gap: 8px; } .tpanel { padding: 16px; }
+  .thead h2 { font-size: 17px; } .thead .sub { font-size: 13px; }
+  .tread .v { font-size: 13px; }
+}
+@media (max-width: 820px) { #pads { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 520px) { #pads { grid-template-columns: 1fr; } }
+@media (max-width: 560px) {
+  header, main { padding-left: 16px; padding-right: 16px; }
+  section { padding: 16px; }
+  .pairing { grid-template-columns: 1fr; justify-items: center; text-align: center; gap: 14px; }
+  .pairing .row { justify-content: center; }
+  #found li { flex-wrap: wrap; }
+  #found li button { width: 100%; }
+  #pads { gap: 8px; }
+  .slot { min-height: 170px; padding: 16px 12px 12px; }
+  .stick { width: 44px; height: 44px; }
+  .trig { height: 44px; }
+  #paired li { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before { transition: none !important; }
+}
 </style>
 </head>
 <body>
 <header>
-  <h1><span>Any</span>Pad PS5</h1><div id="ver"></div>
-  <div id="status">conectando…</div>
+  <div class="mark" aria-hidden="true"><i></i><i></i><i></i></div>
+  <h1>AnyACE</h1><span id="ver"></span>
+  <div id="status">connecting…</div>
 </header>
 
 <main>
   <section id="btfail" hidden>
-    <h2>Bluetooth no disponible</h2>
-    <div id="btreason" class="hint"></div>
-    <div class="row" style="margin-top:10px">
-      <button id="retry" class="solid">Reintentar Bluetooth</button>
-      <span class="hint">El resto del menú y el log siguen funcionando.</span>
-    </div>
-  </section>
-
-    <section>
-    <h2>Emparejar</h2>
-    <div class="hint" style="margin-bottom:10px"><b style="color:var(--orange)">Antes de empezar:</b> crea un
-      <b>usuario nuevo</b> en la consola. Cuando la consola detecte el mando y pregunte qué usuario lo usa,
-      elige ese usuario nuevo (ponle el nombre del mando, p. ej. «PS4» o «Wii»). Juega con tu usuario principal. Si tu mando <b>no es de PlayStation</b> (no tiene botón PS), pulsa el botón azul
-      <b>Pulsar PS</b> de «Mandos emparejados»: es como mantener PS. La consola mostrará un mensaje que se refiere
-      al DualSense, para recuperar la prioridad; con un mando que no es de PlayStation la prioridad vuelve al DualSense
-      y, para devolver el control al mando emparejado, vuelve a este menú y pulsa <b>Pulsar PS</b> otra vez. Si se queda en el usuario del DualSense,
-      funciona en los menús pero los juegos no lo ven.</div>
+    <h2>Bluetooth not available</h2>
+    <div id="btreason"></div>
     <div class="row">
-      <button id="pair" class="solid">Emparejar un mando (60 s)</button>
-      <span id="pairinfo" class="hint">Pon el mando en modo emparejamiento después de pulsar.</span>
+      <button id="retry" class="primary">Retry Bluetooth</button>
+      <span class="hint">The rest of the menu and the log still work.</span>
     </div>
   </section>
 
   <section>
-    <h2>Mandos conectados</h2>
-    <div id="pads" class="pads"></div>
+    <div class="pairing">
+      <div id="ring" class="ring idle" aria-hidden="true">
+        <svg viewBox="0 0 120 120">
+          <defs><linearGradient id="tri" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#3bdb6b"/><stop offset=".5" stop-color="#2f7bff"/><stop offset="1" stop-color="#ff3d4d"/>
+          </linearGradient></defs>
+          <circle class="track" cx="60" cy="60" r="52"/>
+          <circle id="ringleft" class="left" cx="60" cy="60" r="52" style="stroke-dashoffset:327"/>
+        </svg>
+        <div class="num"><b id="ringnum">Ready</b><span id="ringunit"></span></div>
+      </div>
+      <div>
+        <h2>Pair a pad</h2>
+        <p id="pairinfo">Press Search, then put your pad in pairing mode.</p>
+        <div class="row">
+          <button id="pair" class="primary">Search for pads (60 s)</button>
+        </div>
+      </div>
+    </div>
+    <div id="pick" hidden aria-live="polite"><b id="picktitle"></b><span id="picktext"></span></div>
+    <ul id="found" aria-live="polite"></ul>
+    <p class="hint" style="margin:12px 0 0">Nothing pairs by itself: tap <b>Pair</b> on your pad. Your console's DualSense is never paired unless you confirm.</p>
+    <details>
+      <summary>Before you start: use a second console user</summary>
+      <ol>
+        <li>Create a <b>new user</b> on the console and name it after the pad ("PS4", "Xbox"…).</li>
+        <li>When the console detects the pad and asks which user it is for, choose that <b>new user</b>.</li>
+        <li>Play with your main user and tap <b>PS</b> to use the pad. Pads without a PS button use <b>Press PS</b> under Players. It does the same.</li>
+        <li>The console then shows a message about the DualSense taking priority back. To give control back to your pad, press <b>Press PS</b> again.</li>
+        <li>If the pad stays on the DualSense's user, it works in the console menus but games don't see it.</li>
+      </ol>
+    </details>
   </section>
 
   <section>
-    <h2>Mandos emparejados</h2>
-    <table id="paired"></table>
+    <div class="head"><div><h2>Players</h2><p class="sub">P1–P4 are Bluetooth, P5–P8 wired. The colour is the light bar AnyACE gives that pad.</p></div><span id="padcount" class="count"></span></div>
+    <div id="pads"></div>
   </section>
 
   <section>
-    <h2>AnyPad PS5</h2>
+    <div class="head"><div><h2>Wired controllers</h2><p class="sub">Xbox One / Series / 360 pads and clones, 2.4G dongles, DualShock 4 / 3, Switch Pro and other HID pads on a USB port are picked up by themselves.</p></div><span id="wiredcount" class="count"></span></div>
+    <ul id="wired"></ul>
+  </section>
+
+  <section>
+    <div class="head"><h2>Paired pads</h2><span id="pairedcount" class="count"></span></div>
+    <ul id="paired"></ul>
+  </section>
+
+  <section id="settings">
+    <div class="head"><div><h2>Settings</h2><p class="sub">Saved on the console; they apply at once.</p></div></div>
+    <div class="setrow">
+      <div class="setname">When a pad connects</div>
+      <div class="radios" id="set-auto-ps">
+        <label><input type="radio" name="auto_ps" value="0"> Do nothing</label>
+        <label><input type="radio" name="auto_ps" value="1"> Press PS automatically <span class="hint">(for pads without a PS button)</span></label>
+      </div>
+    </div>
+    <div class="setrow">
+      <div class="setname">Give pads to</div>
+      <div class="radios" id="set-user"><span class="hint">Loading users…</span></div>
+    </div>
+    <div id="setstatus" class="hint" style="margin-top:8px"></div>
+  </section>
+
+  <section>
+    <div class="head"><h2>AnyACE</h2></div>
     <div class="row">
-      <button id="showlog">Ver log</button>
-      <button id="exit" class="solid">Salir</button>
-      <span id="exithint" class="hint">Cierra esta página; AnyPad PS5 sigue funcionando.</span>
+      <button id="showlog" class="ghost">Show log</button>
+      <button id="clearlog" class="ghost">Clear log</button>
+      <button id="exit">Exit</button>
+      <span id="exithint" class="hint">Closes this page; AnyACE keeps running.</span>
     </div>
-    <div class="row" style="margin-top:14px">
-      <button id="stop" class="danger">Apagar AnyPad PS5 (avanzado)</button>
-      <span class="hint">Desconecta los mandos y deja el Bluetooth como estaba. Hazlo antes de volver a lanzar el ELF.</span>
+    <div class="row danger-zone">
+      <button id="stop" class="danger">Shut down AnyACE (advanced)</button>
+      <span class="hint">Disconnects the pads and leaves Bluetooth as it was. Do this before launching the ELF again.</span>
     </div>
     <pre id="log" hidden></pre>
   </section>
 </main>
 
+<div id="remapper" hidden role="dialog" aria-modal="true" aria-labelledby="rtitle">
+  <div id="rpanel" class="tpanel">
+    <div class="thead">
+      <div><div id="rslot" class="p">P1</div><h2 id="rtitle">Remap buttons</h2>
+        <p class="sub">Press a button on the pad to find its row, then choose what the console should see. Saved for this pad model and used every time it connects.</p></div>
+      <button id="rclose" class="ghost">Close</button>
+    </div>
+    <div id="rrows" class="rrows"></div>
+    <div class="ropts">
+      <label><input type="checkbox" id="r-sw"> Swap the sticks</label>
+      <label><input type="checkbox" id="r-ilx"> Invert left X</label>
+      <label><input type="checkbox" id="r-ily"> Invert left Y</label>
+      <label><input type="checkbox" id="r-irx"> Invert right X</label>
+      <label><input type="checkbox" id="r-iry"> Invert right Y</label>
+    </div>
+    <div class="ractions">
+      <button id="rsave" class="primary">Save</button>
+      <button id="rreset" class="danger">Back to default</button>
+      <span id="rstatus"></span>
+    </div>
+  </div>
+</div>
+
+<div id="tester" hidden role="dialog" aria-modal="true" aria-labelledby="ttitle">
+  <div id="tpanel" class="tpanel">
+    <div class="thead">
+      <div><div id="tslot" class="p">P1</div><h2 id="ttitle">Test buttons</h2>
+        <p class="sub">Press every button and move every stick. What lights up is what the console and games receive.</p></div>
+      <button id="tclose" class="ghost">Close</button>
+    </div>
+    <div id="tgone" hidden>This pad disconnected. Switch it on again to keep testing.</div>
+    <svg class="pad-svg" viewBox="0 0 600 400" aria-hidden="true">
+      <!-- triggers: fill grows with how far each is pressed -->
+      <rect class="trk" x="95" y="8" width="120" height="22" rx="8"/><rect id="t-l2" class="tfill" x="95" y="8" width="0" height="22" rx="8"/>
+      <text class="lbl" x="155" y="19">L2</text>
+      <rect class="trk" x="385" y="8" width="120" height="22" rx="8"/><rect id="t-r2" class="tfill" x="385" y="8" width="0" height="22" rx="8"/>
+      <text class="lbl" x="445" y="19">R2</text>
+      <rect class="k" data-b="l1" x="95" y="40" width="120" height="20" rx="10"/><text class="lbl" x="155" y="50">L1</text>
+      <rect class="k" data-b="r1" x="385" y="40" width="120" height="20" rx="10"/><text class="lbl" x="445" y="50">R1</text>
+      <path class="body" d="M150 70 H450 C522 70 562 112 578 184 C598 276 592 346 546 362 C504 376 478 336 452 294 C438 272 420 266 400 266 H200 C180 266 162 272 148 294 C122 336 96 376 54 362 C8 346 2 276 22 184 C38 112 78 70 150 70 Z"/>
+      <rect class="k" data-b="touchpad" x="222" y="82" width="156" height="88" rx="14"/><text class="lbl" x="300" y="126">TOUCHPAD</text>
+      <rect class="k" data-b="create" x="196" y="92" width="14" height="28" rx="7"/>
+      <rect class="k" data-b="options" x="390" y="92" width="14" height="28" rx="7"/>
+      <text class="lbl" x="203" y="136" style="font-size:9px">CREATE</text><text class="lbl" x="397" y="136" style="font-size:9px">OPTIONS</text>
+      <rect class="k" data-b="up" x="128" y="126" width="26" height="32" rx="6"/><text class="lbl" x="141" y="140">▲</text>
+      <rect class="k" data-b="down" x="128" y="184" width="26" height="32" rx="6"/><text class="lbl" x="141" y="202">▼</text>
+      <rect class="k" data-b="left" x="94" y="158" width="32" height="26" rx="6"/><text class="lbl" x="109" y="171">◀</text>
+      <rect class="k" data-b="right" x="156" y="158" width="32" height="26" rx="6"/><text class="lbl" x="173" y="171">▶</text>
+      <circle class="k" data-b="triangle" cx="460" cy="132" r="19"/><text class="lbl" x="460" y="132">△</text>
+      <circle class="k" data-b="cross" cx="460" cy="210" r="19"/><text class="lbl" x="460" y="210">✕</text>
+      <circle class="k" data-b="square" cx="421" cy="171" r="19"/><text class="lbl" x="421" y="171">□</text>
+      <circle class="k" data-b="circle" cx="499" cy="171" r="19"/><text class="lbl" x="499" y="171">○</text>
+      <circle class="k" data-b="ps" cx="300" cy="248" r="14"/><text class="lbl" x="300" y="248" style="font-size:10px">PS</text>
+      <!-- sticks: base lights on L3/R3, dashed box = range reached so far -->
+      <circle id="b-l3" class="base" cx="212" cy="236" r="36"/><rect id="g-l" class="range" x="212" y="236" width="0" height="0"/>
+      <circle id="c-l" class="cap" cx="212" cy="236" r="11"/>
+      <circle id="b-r3" class="base" cx="388" cy="236" r="36"/><rect id="g-r" class="range" x="388" y="236" width="0" height="0"/>
+      <circle id="c-r" class="cap" cx="388" cy="236" r="11"/>
+    </svg>
+    <div class="tgrid">
+      <div class="tread"><div class="h">Left stick</div><div id="v-l" class="v">–</div><div id="o-l" class="ok"></div></div>
+      <div class="tread"><div class="h">Right stick</div><div id="v-r" class="v">–</div><div id="o-r" class="ok"></div></div>
+      <div class="tread"><div class="h">L2</div><div id="v-l2" class="v">–</div><div id="o-l2" class="ok"></div></div>
+      <div class="tread"><div class="h">R2</div><div id="v-r2" class="v">–</div><div id="o-r2" class="ok"></div></div>
+    </div>
+    <div class="tcheck">
+      <div class="head"><h2 style="font-size:16px">Buttons tested</h2>
+        <div class="row"><span id="tcount" class="count"></span><button id="treset" class="ghost">Start over</button></div></div>
+      <div id="tchips"></div>
+    </div>
+  </div>
+</div>
 
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
 const NAMES = { cross: "✕", circle: "○", square: "□", triangle: "△", l1: "L1", r1: "R1", l2: "L2", r2: "R2",
   l3: "L3", r3: "R3", up: "↑", down: "↓", left: "←", right: "→", options: "OPTIONS", create: "CREATE",
-  ps: "PS", touchpad: "PANEL" };
+  ps: "PS", touchpad: "TOUCHPAD" };
+const SEARCH_S = 60, RING = 327;
+const picking = {};             /* addr -> time it was picked, to show "Pairing…" across refreshes */
+
 async function api(method, path) {
   const r = await fetch(path, { method, headers: { "X-AnyPad": "1" } });
   if (!r.ok) throw new Error("http " + r.status);
@@ -148,14 +485,135 @@ function trigger(v) {
   return t;
 }
 
+function bars(rssi) {
+  const n = rssi >= -60 ? 4 : rssi >= -70 ? 3 : rssi >= -80 ? 2 : 1, b = el("span", "bars");
+  b.title = rssi + " dBm";
+  for (let i = 1; i <= 4; i++) b.appendChild(el("i", i <= n ? "on" : ""));
+  return b;
+}
+
+function renderRing(left, searching) {
+  $("ring").className = "ring " + (searching ? "searching" : "idle");
+  $("ringleft").style.strokeDashoffset = searching ? RING * (1 - left / SEARCH_S) : RING;
+  $("ringnum").textContent = searching ? left : "Ready";
+  $("ringunit").textContent = searching ? "seconds" : "";
+}
+
+const PICK_TEXT = {
+  checking: ["Checking its name…", "Making sure it isn't your console's DualSense."],
+  pairing: ["Pairing…", "Keep the pad in pairing mode. If the console asks which user it is for, pick your second user."],
+  done: ["Paired", "It's under Players now. Use Test buttons to check it."],
+  no_answer: ["Not paired: the pad didn't answer", "Put it back in pairing mode (lights flashing fast) and tap Pair again."],
+  collision: ["Not paired: the pad kept connecting to the console by itself", "Switch the pad off, put it in pairing mode again and tap Pair. On 8BitDo pads, clearing its pairing first helps (see its manual)."],
+  dualsense: ["Not paired: it's a DualSense", "Probably your console's own pad. Use Pair anyway only if you're sure."],
+  refused: ["Not paired: the console's Bluetooth chip refused to start the connection", "Switch the pad off and on, put it in pairing mode and tap Pair again. If it keeps happening, restart AnyACE."],
+  failed: ["Not paired", "Put the pad back in pairing mode and tap Pair again."],
+};
+
+function renderPick(k) {
+  const box = $("pick");
+  box.hidden = !k;
+  if (!k) return;
+  const t = PICK_TEXT[k.state === "failed" ? (k.why || "failed") : k.state] || PICK_TEXT.failed;
+  box.className = k.state === "failed" ? "failed" : k.state;
+  $("picktitle").textContent = (k.name || k.addr) + " · " + t[0];
+  $("picktext").textContent = t[1] + (k.state === "pairing" && k.tries > 1 ? " (try " + k.tries + " of 4)" : "");
+}
+
+function renderFound(list, searching) {
+  const ul = $("found"), now = Date.now();
+  ul.replaceChildren();
+  if (!list.length) {
+    if (searching) ul.appendChild(el("li", "waiting", "Nothing found yet. Put your pad in pairing mode (DualShock 4: hold Share + PS until the light flashes)."));
+    return;
+  }
+  for (const f of list) {
+    const li = el("li"), who = el("div", "who"), blocked = f.block !== "";
+    if (blocked) li.className = "blocked";
+    const name = f.name || (f.pending ? "Checking name…" : "Unknown name");
+    const n = el("div", "name", name);
+    if (f.le) n.appendChild(el("span", "tag", "LE"));
+    if (f.paired) n.appendChild(el("span", "tag", "paired before"));
+    const meta = el("div", "meta");
+    if (f.rssi) meta.appendChild(bars(f.rssi));
+    meta.appendChild(document.createTextNode(f.addr));
+    who.append(n, meta);
+    if (f.block === "dualsense") who.appendChild(el("div", "warn", "This is a DualSense, probably your console's own pad. Pairing it here takes it away from the console."));
+    if (f.block === "console") who.appendChild(el("div", "warn", "The console is using this pad (your DualSense?). Pairing it here takes it away from the console."));
+    const busy = picking[f.addr] && now - picking[f.addr] < 15000;
+    const b = el("button", blocked ? "danger" : "primary", busy ? "Pairing…" : blocked ? "Pair anyway" : "Pair");
+    b.disabled = busy;
+    b.onclick = async () => {
+      if (blocked && !confirm("Pair " + name + " (" + f.addr + ") anyway?\n\nIf this is your console's DualSense, it will stop working with the console until you reset it and plug it in with a USB cable.")) return;
+      picking[f.addr] = Date.now();
+      b.disabled = true;
+      b.textContent = "Pairing…";
+      try { await api("POST", "/api/pair?addr=" + f.addr + (blocked ? "&force=1" : "")); }
+      catch (e) { delete picking[f.addr]; b.disabled = false; b.textContent = "Not paired, try again"; return; }
+      refresh();
+    };
+    li.append(who, b);
+    ul.appendChild(li);
+  }
+}
+
+const VPAD_TEXT = {
+  "ready": null,
+  "creating": ["Setting up on the console…", ""],
+  "waiting for a user": ["The console hasn't given this pad to a user yet", "If the console shows \"who is using this controller?\", choose your second user there. Otherwise sign in a second user (Settings → Users) and tap Retry. AnyACE also retries every 10 s."],
+  "no user signed in": ["Not reaching the console: nobody is signed in", "Sign in a second user on the console (Settings → Users), then tap Retry."],
+  "not identified": ["Not reaching the console: the virtual pad could not be identified", "Tap Retry, or switch the pad off and on again."],
+  "refused": ["Not reaching the console: the virtual pad was refused", "Tap Retry; if it keeps failing, see the log."],
+  "virtual pads unavailable": ["Not reaching the console: virtual pads unavailable", "See the log."],
+};
+
+function vpadLine(p) {
+  const t = !p.vpad ? null : p.vpad in VPAD_TEXT ? VPAD_TEXT[p.vpad] : ["Not reaching the console: " + p.vpad, ""];
+  const d = el("div", "vp" + (t && p.vpad !== "creating" ? " bad" : ""));
+  if (t) {
+    d.appendChild(el("b", "", t[0]));
+    if (t[1]) d.appendChild(document.createTextNode(t[1] + " "));
+    if (p.vpad !== "creating") {
+      const b = el("button", "danger", "Retry binding");
+      b.style.marginTop = "8px";
+      b.onclick = async () => {
+        b.disabled = true; b.textContent = "Retrying…";
+        try { const r = await api("POST", "/api/bind?slot=" + p.slot); b.textContent = r.bound ? "Bound ✓" : "Retrying…"; }
+        catch (e) { b.textContent = "Nothing to retry"; }
+        setTimeout(refresh, 1200);
+      };
+      d.appendChild(b);
+    }
+  } else {
+    d.textContent = (p.reports > 0 ? p.reports + " reports received" + (p.rid ? " (type 0x" + p.rid + ")" : "") : "Waiting for the pad's first report…")
+      + (p.other > 0 ? " · " + p.other + " not understood (type 0x" + p.rid_other + ")" : "");
+  }
+  return d;
+}
+
+const USB_COLOURS = { 5: "#ffb020", 6: "#22d3ee", 7: "#a78bfa", 8: "#f472b6" };
+function slotColour(slot) { return slot <= 4 ? "var(--p" + slot + ")" : USB_COLOURS[slot] || "#ffb020"; }
+
 function renderPads(pads) {
   const box = $("pads");
   box.replaceChildren();
-  if (!pads.length) { box.appendChild(el("div", "empty", "Ninguno. Enciende un mando emparejado o empareja uno nuevo.")); return; }
-  for (const p of pads) {
-    const c = el("div", "pad"), top = el("div", "top");
-    top.append(el("span", "name", p.profile), el("span", "slot", "J" + p.slot));
-    c.append(top, el("div", "meta", p.addr + " · " + p.vid + ":" + p.pid));
+  const usb = pads.filter((x) => x.usb);
+  $("padcount").textContent = pads.length + " / " + (4 + usb.length);
+  for (let slot = 1; slot <= 4 + usb.length; slot++) {
+    const p = slot <= 4 ? pads.find((x) => x.slot === slot && !x.usb) : usb[slot - 5];
+    if (!p) {
+      const c = el("div", "slot free");
+      c.append(el("div", "p", "P" + slot), el("div", "hint", "Free"));
+      box.appendChild(c);
+      continue;
+    }
+    const c = el("div", "slot" + (p.usb ? " usb" : ""));
+    const pn = el("div", "pname", p.profile), head = el("div", "head");
+    if (p.usb) pn.appendChild(el("span", "tag", "USB"));
+    head.append(el("div", "p", "P" + p.slot), pn);
+    c.appendChild(head);
+    if (p.name) c.appendChild(el("div", "own", p.name));
+    c.appendChild(el("div", "meta", p.vid + ":" + p.pid + (p.usb ? "" : " · " + p.addr)));
     const viz = el("div", "viz");
     viz.append(trigger(p.l2), stick(p.lx, p.ly), stick(p.rx, p.ry), trigger(p.r2));
     c.appendChild(viz);
@@ -163,86 +621,391 @@ function renderPads(pads) {
     for (const b of p.buttons) btns.appendChild(el("span", "", NAMES[b] || b));
     c.appendChild(btns);
     if (p.battery >= 0) {
-      const bat = el("div", "batt"), fill = el("b");
+      const bat = el("div", "batt"), bar = el("div"), fill = el("b");
       fill.style.width = p.battery + "%";
-      bat.title = "Batería " + p.battery + "%" + (p.charging ? " (cargando)" : "");
-      bat.appendChild(fill);
+      bar.appendChild(fill);
+      bat.append(bar, document.createTextNode(p.battery + "%" + (p.charging ? " ⚡" : "")));
+      bat.title = "Battery " + p.battery + "%" + (p.charging ? " (charging)" : "");
       c.appendChild(bat);
     }
+    c.appendChild(vpadLine(p));
+    const acts = el("div", "acts"), ps = el("button", "ps", "Press PS"), tb = el("button", "", "Test buttons");
+    const vb = el("button", "", "Test rumble");
+    vb.title = "Both motors for a moment. Games' rumble does not reach pads yet.";
+    vb.onclick = async () => { vb.disabled = true; try { await api("POST", "/api/rumble?slot=" + p.slot); } catch (e) {} setTimeout(() => { vb.disabled = false; }, 800); };
+    const pb = el("button", "", "Probe rumble");
+    pb.title = "Experiment: for 90 s, asks the console what the game wants this pad to do, and logs it. Play something that rumbles meanwhile.";
+    pb.onclick = async () => {
+      if (!confirm("Start the rumble probe on " + (p.name || p.profile) + "? For 90 s AnyACE will keep asking the console for this pad's remote setting and log the answers. Play a part of a game that rumbles meanwhile, then send the log. This is an experiment; it could stop AnyACE.")) return;
+      pb.disabled = true;
+      try { await api("POST", "/api/probe?slot=" + p.slot); } catch (e) { alert("The probe could not start: the call is not on this firmware, or the pad has no virtual pad yet."); }
+      setTimeout(() => { pb.disabled = false; }, 2000);
+    };
+    const rb = el("button", "", "Remap");
+    rb.title = "Change what each button does on the console";
+    rb.onclick = () => openRemapper(p.slot, p);
+    ps.title = "For pads without a PS button (non-PlayStation pads): the same as holding PS";
+    ps.onclick = async () => { try { await api("POST", "/api/ps?slot=" + p.slot); } catch (e) {} };
+    tb.title = "See every button, stick and trigger as the console receives them";
+    tb.onclick = () => openTester(p.slot, p);
+    tb.textContent = "Test";
+    vb.textContent = "Rumble";
+    acts.append(tb, rb, vb);
+    c.appendChild(acts);
+    const acts3 = el("div", "acts");
+    acts3.style.gridTemplateColumns = "1fr";
+    acts3.appendChild(pb);
+    c.appendChild(acts3);
+    if (p.probe) c.appendChild(el("div", "vp", "Rumble probe: " + p.probe));
+    const acts2 = el("div", "acts2");
+    acts2.appendChild(ps);
+    if (!p.usb) {
+      const dc = el("button", "danger", "Disconnect");
+      dc.title = "Drops the Bluetooth link; the pad stays paired and reconnects when switched on";
+      dc.onclick = async () => {
+        if (!confirm("Disconnect " + (p.name || p.profile) + "? It stays paired; switch it on again to reconnect.")) return;
+        dc.disabled = true;
+        try { await api("POST", "/api/disconnect?slot=" + p.slot); } catch (e) {}
+        setTimeout(refresh, 800);
+      };
+      acts2.appendChild(dc);
+    }
+    c.appendChild(acts2);
     box.appendChild(c);
   }
 }
 
-function renderPaired(list, pads) {
-  const t = $("paired");
-  t.replaceChildren();
-  if (!list.length) { const r = t.insertRow(), d = r.insertCell(); d.className = "empty"; d.textContent = "Ninguno todavía."; return; }
+function renderWired(list) {
+  const ul = $("wired");
+  ul.replaceChildren();
+  $("wiredcount").textContent = list.length ? String(list.length) : "";
+  if (!list.length) { ul.appendChild(el("li", "empty", "None detected. Plug a controller into a USB port of the console.")); return; }
+  const words = { starting: "Detected, starting…", live: "Live", silent: "No input, re-initialising…" };
+  const kinds = { gip: "Xbox One/Series protocol", xinput: "XInput (Xbox 360 style)", receiver: "Xbox 360 wireless receiver", hid: "HID" };
+  for (const u of list) {
+    const li = el("li"), who = el("div", "who");
+    who.append(el("div", "name", (u.name || "USB controller") + " · P" + u.slot),
+      el("div", "meta", (kinds[u.kind] || u.kind || "") + " · " + u.vid + ":" + u.pid + " · " + u.node + (u.reports ? " · " + u.reports + " reports" : "")));
+    li.append(who, el("span", "st " + u.state, words[u.state] || u.state));
+    ul.appendChild(li);
+  }
+}
+
+function renderPaired(list) {
+  const ul = $("paired");
+  ul.replaceChildren();
+  $("pairedcount").textContent = list.length ? String(list.length) : "";
+  if (!list.length) { ul.appendChild(el("li", "empty", "None yet. Search for pads above to pair your first one.")); return; }
   for (const p of list) {
-    const r = t.insertRow(), a = r.insertCell(), b = r.insertCell(), c = r.insertCell();
-    a.append(el("span", "dot" + (p.connected ? " on" : "")), document.createTextNode(p.addr));
-    b.textContent = (p.vid === "0000" && p.pid === "0000" ? "?" : p.vid + ":" + p.pid) + (p.le ? " · LE" : "");
-    c.className = "r";
-    const live = (pads || []).find((x) => x.addr === p.addr);       /* connected: has a slot */
-    if (live) {
-      const ps = el("button", "blue", "Pulsar PS");
-      ps.title = "Para mandos que no tienen botón PS (los que no son de PlayStation): es como mantener pulsado PS";
-      ps.onclick = async () => { try { await api("POST", "/api/ps?slot=" + live.slot); } catch (e) {} };
-      c.appendChild(ps);
-      c.appendChild(document.createTextNode(" "));
-    }
-    const f = el("button", "danger", "Olvidar");
+    const li = el("li"), who = el("div", "who");
+    who.style.flex = "1";
+    who.append(el("div", "name", p.name || "Unnamed pad"),
+      el("span", "ids", p.addr + " · " + (p.vid === "0000" && p.pid === "0000" ? "?" : p.vid + ":" + p.pid) + (p.le ? " · LE" : "") + (p.connected ? " · connected" : "")));
+    li.append(el("span", "dot" + (p.connected ? " on" : "")), who);
+    const f = el("button", "danger", "Forget");
     f.onclick = async () => {
-      if (!confirm("¿Olvidar " + p.addr + "? Tendrás que emparejarlo de nuevo.")) return;
+      if (!confirm("Forget " + (p.name || p.addr) + "? You will have to pair it again.")) return;
       try { await api("POST", "/api/forget?addr=" + p.addr); } catch (e) {}
       refresh();
     };
-    c.appendChild(f);
+    li.appendChild(f);
+    ul.appendChild(li);
   }
 }
 
 async function refresh() {
   try {
     const s = await api("GET", "/api/state");
-    $("ver").textContent = s.version;
-    $("status").textContent = s.running ? "en marcha" : "sin Bluetooth";
+    const searching = s.pairing > 0;
+    $("ver").textContent = "v" + s.version;
+    $("status").textContent = s.bluetooth === "trying" ? "Starting Bluetooth…" : s.running ? "Running" : "No Bluetooth";
     $("status").className = s.running ? "on" : "off";
-    $("pairinfo").textContent = s.pairing > 0
-      ? "Buscando mandos… " + s.pairing + " s. Pon el mando en modo emparejamiento."
-      : "Pon el mando en modo emparejamiento después de pulsar.";
+    $("pairinfo").textContent = searching
+      ? "Searching… put your pad in pairing mode, then tap Pair on it below."
+      : "Press Search, then put your pad in pairing mode.";
     $("btfail").hidden = s.bluetooth !== "failed";
     $("btreason").textContent = s.reason || "";
-    if (s.bluetooth === "trying") $("status").textContent = "iniciando Bluetooth…";
-    $("pair").disabled = s.pairing > 0 || s.bluetooth !== "ok";
+    $("pair").disabled = searching || s.bluetooth !== "ok";
+    $("pair").textContent = searching ? "Searching…" : "Search for pads (60 s)";
+    renderRing(s.pairing, searching);
+    renderPick(s.pick);
+    renderFound(s.found || [], searching);
     renderPads(s.pads);
-    renderPaired(s.paired, s.pads);
+    renderWired(s.wired || []);
+    renderPaired(s.paired);
   } catch (e) {
-    $("status").textContent = "sin conexión";
+    $("status").textContent = "No connection";
     $("status").className = "off";
   }
 }
 
+/* ---- settings ---- */
+let settingsLoaded = false, settingsSaving = false;
+async function loadSettings() {
+  try {
+    const s = await api("GET", "/api/settings");
+    document.querySelectorAll('input[name="auto_ps"]').forEach((r) => { r.checked = r.value === (s.auto_ps ? "1" : "0"); });
+    const box = $("set-user");
+    box.replaceChildren();
+    const mk = (value, text, hint) => {
+      const l = el("label"), r = el("input");
+      r.type = "radio"; r.name = "bind_user"; r.value = value; r.checked = s.bind_user === value;
+      l.append(r, document.createTextNode(text));
+      if (hint) l.appendChild(el("span", "hint", hint));
+      r.onchange = saveSettings;
+      box.appendChild(l);
+    };
+    mk("auto", "The console's choice", "(the console's owner if signed in, else whoever is)");
+    for (const u of s.users) mk(u.id, u.name, u.initial ? "(console owner)" : "");
+    if (!s.users.length) box.appendChild(el("span", "hint", "Nobody is signed in on the console right now."));
+    document.querySelectorAll('input[name="auto_ps"]').forEach((r) => { r.onchange = saveSettings; });
+    settingsLoaded = true;
+  } catch (e) {
+    $("set-user").replaceChildren(el("span", "hint", "Settings unavailable."));
+  }
+}
+async function saveSettings() {
+  if (settingsSaving) return;
+  settingsSaving = true;
+  const ps = document.querySelector('input[name="auto_ps"]:checked'), u = document.querySelector('input[name="bind_user"]:checked');
+  $("setstatus").textContent = "Saving…";
+  try {
+    await api("POST", "/api/settings?auto_ps=" + (ps ? ps.value : 0) + "&bind_user=" + (u ? u.value : "auto"));
+    $("setstatus").textContent = "Saved ✓" + (u && u.value !== "auto" ? " · connected pads are being given to that user" : "");
+  } catch (e) { $("setstatus").textContent = "Not saved"; }
+  settingsSaving = false;
+}
+loadSettings();
+setInterval(() => { if (!settingsLoaded) loadSettings(); }, 5000);
+
 $("retry").onclick = async () => { try { await api("POST", "/api/retry"); } catch (e) {} refresh(); };
 $("pair").onclick = async () => { try { await api("POST", "/api/pair"); } catch (e) {} refresh(); };
 $("exit").onclick = () => {
-  /* Only leaves the page: AnyPad PS5 keeps running. Browsers refuse to close a page they did
+  /* Only leaves the page: AnyACE keeps running. Browsers refuse to close a page they did
      not open from a script, so fall back to going back, then say how to leave. */
   try { window.close(); } catch (e) {}
   setTimeout(() => { if (history.length > 1) history.back(); }, 250);
-  setTimeout(() => { $("exithint").textContent = "Si no se ha cerrado, pulsa el botón PS del mando para volver al menú de la consola."; }, 800);
+  setTimeout(() => { $("exithint").textContent = "If it did not close, press the PS button on your pad to go back to the console menu."; }, 800);
 };
 $("stop").onclick = async () => {
-  if (!confirm("¿Detener AnyPad PS5? Los mandos conectados se desconectarán.")) return;
+  if (!confirm("Shut down AnyACE? Connected pads will be disconnected.")) return;
   try { await api("POST", "/api/stop"); } catch (e) {}
-  $("status").textContent = "deteniéndose";
+  $("status").textContent = "Stopping";
+};
+$("clearlog").onclick = async () => {
+  if (!confirm("Clear the log? Keep it if you still need to send it for a problem.")) return;
+  try { await api("POST", "/api/log/clear"); } catch (e) { return; }
+  const pre = $("log");
+  if (!pre.hidden) { try { pre.textContent = await api("GET", "/api/log"); } catch (e) {} }
 };
 $("showlog").onclick = async () => {
   const pre = $("log");
-  if (!pre.hidden) { pre.hidden = true; $("showlog").textContent = "Ver log"; return; }
+  if (!pre.hidden) { pre.hidden = true; $("showlog").textContent = "Show log"; return; }
   try { pre.textContent = await api("GET", "/api/log"); } catch (e) { return; }
   pre.hidden = false;
   pre.scrollTop = pre.scrollHeight;
-  $("showlog").textContent = "Ocultar log";
+  $("showlog").textContent = "Hide log";
 };
+
+/* ---- button test ---- */
+const TEST_BUTTONS = ["cross", "circle", "square", "triangle", "up", "down", "left", "right", "l1", "r1", "l2", "r2",
+  "l3", "r3", "options", "create", "ps", "touchpad"];
+const STICK_R = 25;             /* how far a cap moves from the centre, in diagram units */
+let test = null, testTimer = 0, testBusy = false, testOpener = null;
+
+function openTester(slot, p) {
+  test = { slot, addr: p.addr, seen: {}, lo: { lx: 255, ly: 255, rx: 255, ry: 255 },
+           hi: { lx: 0, ly: 0, rx: 0, ry: 0, l2: 0, r2: 0 } };
+  testOpener = document.activeElement;
+  $("tpanel").style.setProperty("--c", slotColour(slot));
+  $("tslot").textContent = "P" + slot;
+  $("ttitle").textContent = "Test buttons · " + p.profile;
+  $("tester").hidden = false;
+  document.body.style.overflow = "hidden";
+  renderTester(p);
+  $("tclose").focus();
+  testTimer = setInterval(pollTester, 100);
+}
+
+function closeTester() {
+  clearInterval(testTimer);
+  test = null;
+  $("tester").hidden = true;
+  document.body.style.overflow = "";
+  if (testOpener && testOpener.focus) testOpener.focus();
+}
+
+async function pollTester() {
+  if (!test || testBusy) return;
+  testBusy = true;
+  try {
+    const s = await api("GET", "/api/state");
+    if (test) renderTester((s.pads || []).find((x) => x.slot === test.slot && x.addr === test.addr));
+  } catch (e) {}
+  testBusy = false;
+}
+
+function moveStick(id, x, y) {
+  const c = $("c-" + id), cx = +$("b-" + id + "3").getAttribute("cx"), cy = +$("b-" + id + "3").getAttribute("cy");
+  c.setAttribute("cx", cx + (x - 128) / 128 * STICK_R);
+  c.setAttribute("cy", cy + (y - 128) / 128 * STICK_R);
+  const g = $("g-" + id), lo = test.lo, hi = test.hi;
+  const x0 = cx + (lo[id + "x"] - 128) / 128 * STICK_R, y0 = cy + (lo[id + "y"] - 128) / 128 * STICK_R;
+  g.setAttribute("x", x0);
+  g.setAttribute("y", y0);
+  g.setAttribute("width", Math.max(0, (hi[id + "x"] - lo[id + "x"]) / 128 * STICK_R));
+  g.setAttribute("height", Math.max(0, (hi[id + "y"] - lo[id + "y"]) / 128 * STICK_R));
+}
+
+function renderTester(p) {
+  $("tgone").hidden = !!p;
+  if (!p) return;
+  const on = {};
+  for (const b of p.buttons) { on[b] = true; test.seen[b] = true; }
+  for (const k of ["lx", "ly", "rx", "ry"]) {
+    test.lo[k] = Math.min(test.lo[k], p[k]);
+    test.hi[k] = Math.max(test.hi[k], p[k]);
+  }
+  test.hi.l2 = Math.max(test.hi.l2, p.l2);
+  test.hi.r2 = Math.max(test.hi.r2, p.r2);
+  document.querySelectorAll("#tester [data-b]").forEach((e) => e.classList.toggle("on", !!on[e.dataset.b]));
+  $("b-l3").classList.toggle("on", !!on.l3);
+  $("b-r3").classList.toggle("on", !!on.r3);
+  moveStick("l", p.lx, p.ly);
+  moveStick("r", p.rx, p.ry);
+  $("t-l2").setAttribute("width", p.l2 / 255 * 120);
+  $("t-r2").setAttribute("width", p.r2 / 255 * 120);
+
+  const full = (k) => test.lo[k] <= 12 && test.hi[k] >= 243;
+  const ok = (id, yes, done, todo) => { $(id).textContent = yes ? "✓ " + done : todo; $(id).className = "ok" + (yes ? " yes" : ""); };
+  $("v-l").textContent = "X " + p.lx + " · Y " + p.ly;
+  $("v-r").textContent = "X " + p.rx + " · Y " + p.ry;
+  ok("o-l", full("lx") && full("ly"), "Full range", "Move it all the way round");
+  ok("o-r", full("rx") && full("ry"), "Full range", "Move it all the way round");
+  $("v-l2").textContent = p.l2 + " / 255";
+  $("v-r2").textContent = p.r2 + " / 255";
+  ok("o-l2", test.hi.l2 >= 250, "Full press", "Press it all the way");
+  ok("o-r2", test.hi.r2 >= 250, "Full press", "Press it all the way");
+
+  const chips = $("tchips");
+  chips.replaceChildren();
+  let n = 0;
+  for (const b of TEST_BUTTONS) {
+    const done = !!test.seen[b];
+    if (done) n++;
+    chips.appendChild(el("span", (done ? "done" : "") + (on[b] ? " now" : ""), NAMES[b] || b));
+  }
+  $("tcount").textContent = n + " / " + TEST_BUTTONS.length;
+}
+
+/* ---- remap editor ---- */
+const REMAP_NAMES = ["cross", "circle", "square", "triangle", "l1", "r1", "l2", "r2", "l3", "r3",
+  "up", "down", "left", "right", "options", "create", "ps", "touchpad"];
+const REMAP_NONE = 18;
+let remap = null, remapTimer = 0, remapBusy = false, remapOpener = null;
+
+function remapQuery() {
+  const m = [];
+  for (let i = 0; i < REMAP_NAMES.length; i++) m.push(i + "." + $("r-" + i).value);
+  const b = (id) => ($(id).checked ? 1 : 0);
+  return "m=" + m.join(",") + ";sw=" + b("r-sw") + ";ilx=" + b("r-ilx") + ";ily=" + b("r-ily") + ";irx=" + b("r-irx") + ";iry=" + b("r-iry");
+}
+
+function remapFill(q) {
+  const parts = Object.fromEntries(q.split(";").filter(Boolean).map((kv) => kv.split("=")));
+  for (let i = 0; i < REMAP_NAMES.length; i++) $("r-" + i).value = String(i);
+  for (const pair of (parts.m || "").split(",").filter(Boolean)) {
+    const [from, to] = pair.split(".").map(Number);
+    if (from >= 0 && from < REMAP_NAMES.length) $("r-" + from).value = String(to);
+  }
+  $("r-sw").checked = parts.sw === "1";
+  $("r-ilx").checked = parts.ilx === "1"; $("r-ily").checked = parts.ily === "1";
+  $("r-irx").checked = parts.irx === "1"; $("r-iry").checked = parts.iry === "1";
+  remapMark();
+}
+
+function remapMark() {
+  for (let i = 0; i < REMAP_NAMES.length; i++) $("r-" + i).classList.toggle("changed", $("r-" + i).value !== String(i));
+}
+
+function buildRemapRows() {
+  const box = $("rrows");
+  if (box.children.length) return;
+  for (let i = 0; i < REMAP_NAMES.length; i++) {
+    const row = el("div", "rrow"), sel = el("select");
+    row.id = "rrow-" + i;
+    sel.id = "r-" + i;
+    for (let j = 0; j <= REMAP_NONE; j++) {
+      const o = el("option", "", j === REMAP_NONE ? "nothing" : (NAMES[REMAP_NAMES[j]] || REMAP_NAMES[j]) + (j === i ? " (default)" : ""));
+      o.value = String(j);
+      sel.appendChild(o);
+    }
+    sel.onchange = remapMark;
+    row.append(el("span", "src", NAMES[REMAP_NAMES[i]] || REMAP_NAMES[i]), el("span", "arrow", "→"), sel);
+    box.appendChild(row);
+  }
+}
+
+async function openRemapper(slot, p) {
+  buildRemapRows();
+  remap = { slot };
+  remapOpener = document.activeElement;
+  $("rpanel").style.setProperty("--c", slotColour(slot));
+  $("rslot").textContent = "P" + slot;
+  $("rtitle").textContent = "Remap buttons · " + (p.name || p.profile);
+  $("rstatus").textContent = "";
+  $("remapper").hidden = false;
+  document.body.style.overflow = "hidden";
+  try { remapFill((await api("GET", "/api/remap?slot=" + slot)).map); } catch (e) { remapFill(""); }
+  $("rclose").focus();
+  remapTimer = setInterval(pollRemapper, 120);
+}
+
+function closeRemapper() {
+  clearInterval(remapTimer);
+  remap = null;
+  $("remapper").hidden = true;
+  document.body.style.overflow = "";
+  if (remapOpener && remapOpener.focus) remapOpener.focus();
+}
+
+async function pollRemapper() {
+  if (!remap || remapBusy) return;
+  remapBusy = true;
+  try {
+    const s = await api("GET", "/api/state");
+    const p = (s.pads || []).find((x) => x.slot === remap.slot);
+    const raw = p ? p.raw || [] : [];
+    for (let i = 0; i < REMAP_NAMES.length; i++) $("rrow-" + i).classList.toggle("now", raw.includes(REMAP_NAMES[i]));
+  } catch (e) {}
+  remapBusy = false;
+}
+
+$("rclose").onclick = closeRemapper;
+$("rsave").onclick = async () => {
+  if (!remap) return;
+  $("rstatus").textContent = "Saving…";
+  try { await api("POST", "/api/remap?slot=" + remap.slot + "&map=" + remapQuery()); $("rstatus").textContent = "Saved ✓ · in use now"; }
+  catch (e) { $("rstatus").textContent = "Not saved (is the pad still connected?)"; }
+};
+$("rreset").onclick = async () => {
+  if (!remap || !confirm("Back to the default mapping for this pad?")) return;
+  remapFill("");
+  try { await api("POST", "/api/remap?slot=" + remap.slot + "&map=m="); $("rstatus").textContent = "Default restored"; }
+  catch (e) { $("rstatus").textContent = "Not saved"; }
+};
+$("remapper").addEventListener("click", (e) => { if (e.target === $("remapper")) closeRemapper(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && remap) closeRemapper(); });
+
+$("tclose").onclick = closeTester;
+$("treset").onclick = () => {
+  if (!test) return;
+  test.seen = {};
+  test.lo = { lx: 255, ly: 255, rx: 255, ry: 255 };
+  test.hi = { lx: 0, ly: 0, rx: 0, ry: 0, l2: 0, r2: 0 };
+};
+$("tester").addEventListener("click", (e) => { if (e.target === $("tester")) closeTester(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && test) closeTester(); });
 
 refresh();
 setInterval(refresh, 1000);

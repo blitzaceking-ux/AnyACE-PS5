@@ -110,6 +110,8 @@ int main(void)
     pad.mode = SIM_WAIT_PAIRING;
     memcpy(pad.addr, addr, 6);
     pad.cod = 0x002508;
+    strcpy(pad.name, "Wireless Controller");
+    pad.name_in_eir = 1;
     pad.vid = 0x054C;
     pad.pid = 0x05C4;
     memset(pad.report, 0, 78);
@@ -143,13 +145,30 @@ int main(void)
     printf("the page\n");
     get("GET", "/", out, sizeof out);
     CHECK(strncmp(out, "HTTP/1.1 200", 12) == 0);
-    CHECK(strstr(out, "<title>AnyPad PS5</title>") != NULL);
+    CHECK(strstr(out, "<title>AnyACE</title>") != NULL);
 
-    printf("pairing from the page, then the pad in the state\n");
+    printf("pairing from the page: search, the pad listed, picked, then in the state\n");
     get("POST", "/api/pair", out, sizeof out);
     CHECK(strstr(out, "{\"ok\":true}") != NULL);
-    run(8000);
+    run(15000);
     get("GET", "/api/state", out, sizeof out);
+    CHECK(strstr(out, "\"found\":[{\"addr\":\"06:05:04:03:02:01\"") != NULL);
+    CHECK(strstr(out, "\"block\":\"\"") != NULL);
+    CHECK(strstr(out, "\"connected\":true") == NULL);     /* nothing paired by itself */
+    CHECK(strstr(out, "\"pick\":null") != NULL);
+    get("POST", "/api/pair?addr=nonsense", out, sizeof out);
+    CHECK(strncmp(out, "HTTP/1.1 400", 12) == 0);
+    get("POST", "/api/pair?addr=01:02:03:04:05:06", out, sizeof out);
+    CHECK(strncmp(out, "HTTP/1.1 404", 12) == 0);
+    get("POST", "/api/pair?addr=06:05:04:03:02:01", out, sizeof out);
+    CHECK(strstr(out, "{\"ok\":true}") != NULL);
+    run(10000);
+    get("GET", "/api/state", out, sizeof out);
+    CHECK(strstr(out, "\"found\":[]") != NULL);
+    CHECK(strstr(out, "\"pick\":{\"addr\":\"06:05:04:03:02:01\"") != NULL);
+    CHECK(strstr(out, "\"state\":\"done\"") != NULL);
+    CHECK(strstr(out, "\"name\":\"Wireless Controller\"") != NULL);
+    CHECK(strstr(out, "\"addr\":\"06:05:04:03:02:01\",\"name\":\"Wireless Controller\"") != NULL);
     CHECK(strstr(out, "\"profile\":\"DualShock 4\"") != NULL);
     CHECK(strstr(out, "\"addr\":\"06:05:04:03:02:01\"") != NULL);
     CHECK(strstr(out, "\"buttons\":[\"cross\"]") != NULL);
@@ -192,6 +211,12 @@ int main(void)
     printf("the log tail\n");
     get("GET", "/api/log", out, sizeof out);
     CHECK(strstr(out, "line two") != NULL);
+
+    printf("clearing the log\n");
+    get("POST", "/api/log/clear", out, sizeof out);
+    CHECK(strstr(out, "{\"ok\":true}") != NULL);
+    get("GET", "/api/log", out, sizeof out);
+    CHECK(strncmp(out, "HTTP/1.1 200", 12) == 0 && strstr(out, "line one") == NULL);   /* emptied */
 
     printf("the PS button of a pad\n");
     get("POST", "/api/ps?slot=1", out, sizeof out);

@@ -2,8 +2,9 @@
  * controllers and many others speak it.
  *
  *   scanning    pads advertise; in the pairing window any that looks like a
- *               gamepad is taken, otherwise only paired ones (also behind
- *               resolvable private addresses, through their IRK)
+ *               gamepad is listed for the user to pick (le_pair), otherwise
+ *               only paired ones are connected (also behind resolvable
+ *               private addresses, through their IRK)
  *   pairing     SMP as initiator, "Just Works": LE Secure Connections when
  *               both sides can (the controller does the P-256 maths), LE
  *               legacy otherwise. The keys the pad hands out are stored.
@@ -31,6 +32,8 @@
 #define OP_LE_CREATE_CONN        0x200D
 #define OP_LE_CREATE_CONN_CANCEL 0x200E
 #define OP_LE_CONN_UPDATE        0x2013
+#define OP_LE_REMOTE_PARAM_REPLY 0x2020
+#define OP_LE_REMOTE_PARAM_NEG   0x2021
 #define OP_LE_START_ENCRYPTION   0x2019
 #define OP_LE_READ_LOCAL_P256    0x2025
 #define OP_LE_GENERATE_DHKEY     0x2026
@@ -72,6 +75,10 @@ enum {
 #define UUID_REPORT_MAP     0x2A4B
 #define UUID_REPORT         0x2A4D
 #define UUID_PNP_ID         0x2A50
+#define UUID_BATTERY_LEVEL  0x2A19
+
+#define T_BATT_READ      60000      /* between battery reads */
+#define T_BATT_WAIT       3000      /* an unanswered battery request is forgotten */
 
 #define OUR_MTU             185
 
@@ -331,7 +338,13 @@ static void on_advert(host_t *h, const uint8_t *r, int n)
     addr = r + 2;
     dlen = r[8];
     data = r + 9;
-    if (9 + dlen > n || evtype > 1) return;     /* connectable adverts only */
+    if (9 + dlen > n) return;
+    if (evtype == 4) {                          /* scan response: maybe the name */
+        found_t *f = now_ms() < h->pair_until ? found_find_le(h, addr) : NULL;
+        if (f) found_name_from_ad(f, data, dlen);
+        return;
+    }
+    if (evtype > 1) return;                     /* connectable adverts only */
     if (link_by_addr(h, addr)) return;
     for (i = 0; i < HOST_MAX_PADS; i++)         /* one connection attempt at a time */
         if (h->links[i].used && h->links[i].le && !h->links[i].connected) return;
@@ -342,10 +355,29 @@ static void on_advert(host_t *h, const uint8_t *r, int n)
             if (h->links[i].used && h->links[i].le &&
                 memcmp(link_id_addr(&h->links[i]), bond->addr, 6) == 0) return;
         le_connect(h, type, addr, bond);
+    } else if (pick_wanted(h, addr)) {
+        if (pick_try_begin(h, addr)) {
+            log_line("pairing: the picked LE pad %s is advertising, connecting (try %d of %d)",
+                     addr_str(addr), h->pick_tries, PICK_TRIES);
+            le_pair(h, type, addr);
+        }
     } else if (now_ms() < h->pair_until && looks_like_gamepad(data, dlen)) {
-        log_line("found LE gamepad %s", addr_str(addr));
-        le_connect(h, type, addr, NULL);
+        found_t *f;
+        if (!found_find_le(h, addr)) log_line("found LE gamepad %s", addr_str(addr));
+        f = found_add(h, addr, 1, type, 9 + dlen < n ? (int8_t)data[dlen] : 0);
+        found_name_from_ad(f, data, dlen);
     }
+}
+
+int le_pair(host_t *h, uint8_t type, const unsigned char *addr)
+{
+    int i;
+
+    if (!h->le_ok || link_by_addr(h, addr)) return 0;
+    for (i = 0; i < HOST_MAX_PADS; i++)         /* one connection attempt at a time */
+        if (h->links[i].used && h->links[i].le && !h->links[i].connected) return 0;
+    le_connect(h, type, addr, NULL);
+    return link_by_addr(h, addr) != NULL;
 }
 
 void le_poll(host_t *h, long now)
@@ -389,18 +421,54 @@ void le_on_meta(host_t *h, const unsigned char *ev, int len)
         l = link_by_addr(h, ev + 6);
         if (!l || !l->le || l->connected) break;
         if (ev[1] != 0) {
-            log_line("le pad %s: connection failed (status %#04x)", addr_str(l->addr), ev[1]);
-            link_free(h, l);
+            {
+                unsigned char a[6];
+                memcpy(a, l->addr, 6);
+                log_line("le pad %s: connection failed (status %#04x)", addr_str(a), ev[1]);
+                link_free(h, l);
+                pick_failed_try(h, a, HOST_WHY_NO_ANSWER);
+            }
             break;
         }
         l->connected = 1;
         l->handle = le16(ev + 2) & 0x0FFF;
         l->t_conn = now_ms();
         log_line("le pad %s: connected, handle %#05x", addr_str(l->addr), l->handle);
+        pick_connected(h, l->addr);
         break;
 
     case 0x02:  /* Advertising Report: one report per event, in practice */
         if (len >= 3 && ev[1] >= 1) on_advert(h, ev + 2, len - 2);
+        break;
+
+    case 0x06:  /* Remote Connection Parameter Request: handle, interval
+                 * min, max, latency, timeout. The pad asks for these (to
+                 * save power when idle); left unanswered, the controller
+                 * times the procedure out after 40 s and the pad is dropped
+                 * with reason 0x22. Anything sane is accepted. */
+        if (len < 11) break;
+        {
+            unsigned handle = le16(ev + 1) & 0x0FFF;
+            unsigned imin = le16(ev + 3), imax = le16(ev + 5), lat = le16(ev + 7), to = le16(ev + 9);
+            int ok = imin >= 6 && imax <= 3200 && imin <= imax && lat <= 499 && to >= 10 && to <= 3200 &&
+                     (unsigned)(to * 10) > (lat + 1) * imax * 2 * 5 / 4;   /* timeout past the latency, 1.25 ms units */
+            uint8_t p[14];
+            for (l = h->links; l < h->links + HOST_MAX_PADS; l++)
+                if (l->used && l->le && l->connected && l->handle == handle) break;
+            if (l == h->links + HOST_MAX_PADS) l = NULL;
+            put16(p, handle);
+            if (ok) {
+                memcpy(p + 2, ev + 3, 8);
+                put16(p + 10, 0);
+                put16(p + 12, 0);
+                send_cmd(h, OP_LE_REMOTE_PARAM_REPLY, p, 14);
+            } else {
+                p[2] = 0x3B;                /* unacceptable connection parameters */
+                send_cmd(h, OP_LE_REMOTE_PARAM_NEG, p, 3);
+            }
+            log_line("le pad %s: asked for connection interval %u-%u (x1.25 ms), latency %u, timeout %u ms: %s",
+                     l ? addr_str(l->addr) : "?", imin, imax, lat, to * 10, ok ? "accepted" : "refused");
+        }
         break;
 
     case 0x08:  /* Read Local P-256 Public Key Complete */
@@ -468,14 +536,14 @@ static void bond_save(host_t *h, link_t *l)
     db_rec *d;
 
     if (e->keys_got & 0x02) {           /* the pad's identity address */
-        d = db_put(h, e->id_addr);
+        d = db_put_link(h, e->id_addr, l);
         d->addr_type = e->id_type;
         memcpy(d->irk, e->dist_irk, 16);    /* kept as sent: LSB first */
         d->has_irk = 1;
     } else {
         memcpy(e->id_addr, l->addr, 6);
         e->id_type = e->addr_type;
-        d = db_put(h, l->addr);
+        d = db_put_link(h, l->addr, l);
         d->addr_type = e->addr_type;
         d->has_irk = 0;
     }
@@ -871,6 +939,23 @@ static void on_att_response(host_t *h, link_t *l, const uint8_t *d, int n)
     if (!err && d[0] != e->req[0] + 1) return;      /* not the answer we wait for */
     e->req_len = 0;                                 /* answered */
 
+    if (e->gatt == G_DONE) {                        /* only battery requests go out then */
+        if (e->batt_state == 1) {
+            if (!err && n >= 5 && d[1] == 3) {
+                e->batt_handle = (uint16_t)le16(d + 2);
+                e->batt_pct = d[4];
+                e->batt_state = 2;
+                log_line("le pad %s: battery %d%%", addr_str(l->addr), e->batt_pct);
+            } else {
+                e->batt_state = 9;
+            }
+        } else if (e->batt_state == 3) {
+            if (!err && n >= 2) e->batt_pct = d[1];
+            e->batt_state = 2;
+        }
+        return;
+    }
+
     switch (e->gatt) {
     case G_MTU:
         if (!err && n >= 3) {
@@ -1120,9 +1205,12 @@ void le_step(host_t *h, link_t *l, long now)
 
     if (!l->connected) {
         if (now - l->t_create > T_LE_CONNECT) {
+            unsigned char a[6];
+            memcpy(a, l->addr, 6);
             send_cmd(h, OP_LE_CREATE_CONN_CANCEL, NULL, 0);
-            log_line("le pad %s: did not connect", addr_str(l->addr));
+            log_line("le pad %s: did not connect", addr_str(a));
             link_free(h, l);
+            pick_failed_try(h, a, HOST_WHY_NO_ANSWER);
         }
         return;
     }
@@ -1168,4 +1256,25 @@ void le_step(host_t *h, link_t *l, long now)
 
     if (e->gatt == G_DONE && !l->ready && (e->smp == SMP_DONE || e->bonded)) link_ready(h, l);
     if (l->ready) init_tick(h, l, now);
+
+    /* The battery level, through the Battery Service if the pad has one. */
+    if (e->gatt == G_DONE && l->ready && e->batt_state != 9) {
+        if (e->req_len && now - e->t_req > T_BATT_WAIT) {
+            e->req_len = 0;
+            if (e->batt_state == 1) e->batt_state = 9;
+            else if (e->batt_state == 3) e->batt_state = 2;
+        }
+        if (!e->req_len) {
+            if (e->batt_state == 0) {
+                e->batt_pct = -1;
+                e->batt_state = 1;
+                e->t_batt = now;
+                read_by_type(h, l, 0x0001, 0xFFFF, UUID_BATTERY_LEVEL);
+            } else if (e->batt_state == 2 && now - e->t_batt >= T_BATT_READ) {
+                e->batt_state = 3;
+                e->t_batt = now;
+                read_handle(h, l, e->batt_handle);
+            }
+        }
+    }
 }

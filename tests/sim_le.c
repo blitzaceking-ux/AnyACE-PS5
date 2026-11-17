@@ -20,10 +20,13 @@ enum {
     H_DIS = 1, H_PNP_DECL, H_PNP,
     H_HID = 16, H_MAP_DECL, H_MAP, H_IN_DECL, H_IN, H_IN_CCCD, H_IN_REF,
     H_OUT_DECL, H_OUT, H_OUT_REF, H_INFO_DECL, H_INFO,
-    H_LAST = H_INFO,
+    H_HID_END = H_INFO,
+    H_BATT_SVC = 40, H_BATT_DECL, H_BATT,
+    H_LAST = H_BATT,
 };
 
 struct sim_le {
+    int param_replies, cancels;
     sim_le_pad pad;
     queue ev, acl;
     uint8_t host_addr[6];
@@ -374,6 +377,9 @@ static int attr_value(sim_le_t *s, uint16_t h, uint8_t *out, uint16_t *type)
     switch (h) {
     case H_DIS:  *type = 0x2800; put16(p, 0x180A); return 2;
     case H_HID:  *type = 0x2800; put16(p, 0x1812); return 2;
+    case H_BATT_SVC: if (s->pad.battery < 0) return -1; *type = 0x2800; put16(p, 0x180F); return 2;
+    case H_BATT_DECL: if (s->pad.battery < 0) return -1; *type = 0x2803; p[0] = 0x12; put16(p + 1, H_BATT); put16(p + 3, 0x2A19); return 5;
+    case H_BATT: if (s->pad.battery < 0) return -1; *type = 0x2A19; p[0] = (uint8_t)s->pad.battery; return 1;
     case H_PNP_DECL: *type = 0x2803; p[0] = 0x02; put16(p + 1, H_PNP); put16(p + 3, 0x2A50); return 5;
     case H_PNP:
         *type = 0x2A50;
@@ -437,7 +443,7 @@ static void on_att(sim_le_t *s, const uint8_t *d, int n)
         if (le16(d + 5) == 0x2800 && le16(d + 7) == 0x1812 && start <= H_HID && end >= H_HID) {
             r[0] = 0x07;
             put16(r + 1, H_HID);
-            put16(r + 3, H_LAST);
+            put16(r + 3, H_HID_END);
             acl_to_host(s, 4, r, 5);
         } else {
             att_error(s, 0x06, start, 0x0A);
@@ -597,7 +603,17 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
         r[0] = 0;
         cmd_complete(s, op, r, 1);
         break;
+    case 0x200E:                        /* create connection cancel */
+        s->cancels++;
+        s->pad.refuse_connects = 0;
+        r[0] = 0;
+        cmd_complete(s, op, r, 1);
+        break;
     case 0x200D:                        /* create connection */
+        if (s->pad.refuse_connects) {
+            cmd_status(s, op, 0x0C);    /* command disallowed */
+            break;
+        }
         cmd_status(s, op, 0);
         if (s->powered && !s->connected && p[5] == s->cur_type && memcmp(p + 6, s->cur_addr, 6) == 0) {
             r[0] = 0x01;
@@ -652,6 +668,13 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
         break;
     case 0x2013:
         cmd_status(s, op, 0);
+        break;
+    case 0x2020:                        /* remote connection parameter request reply */
+    case 0x2021:
+        s->param_replies++;
+        r[0] = 0;
+        put16(r + 1, le16(p));
+        cmd_complete(s, op, r, 3);
         break;
     default:
         r[0] = 0;
@@ -792,3 +815,5 @@ int sim_le_last_output(const sim_le_t *s, uint8_t *out, int max)
     memcpy(out, s->last_out, (size_t)n);
     return n;
 }
+int sim_le_param_replies(const sim_le_t *s) { return s->param_replies; }
+int sim_le_cancels(const sim_le_t *s) { return s->cancels; }

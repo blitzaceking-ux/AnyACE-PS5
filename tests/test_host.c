@@ -11,6 +11,8 @@
 int sdp_find_ids(const unsigned char *p, int n, uint16_t *vid, uint16_t *pid);
 
 static int g_fail;
+
+#define PICK_TRIES_MAX 4        /* host_int.h PICK_TRIES */
 #define CHECK(c) do { if (!(c)) { printf("  FAIL %s:%d  %s\n", __FILE__, __LINE__, #c); g_fail++; } } while (0)
 
 typedef struct {
@@ -70,6 +72,21 @@ static host_t *open_host(sim_t *sim, seen *s)
     return host_open(sim_hci(sim), DB, &ev);
 }
 
+/* Starts a search and picks the first pad it lists, as the user would on
+ * the page. Returns what host_pair_addr() said. */
+static int pick_first(host_t *h, int seconds)
+{
+    host_found_info f;
+    long end = sim_now() + 15000;
+
+    host_pair(h, seconds);
+    while (sim_now() < end) {
+        host_poll(h, 5);
+        if (host_found_get(h, 0, &f)) return host_pair_addr(h, f.addr, 0);
+    }
+    return HOST_PAIR_UNKNOWN;
+}
+
 static int test_pairing_seed(int drop_every, unsigned seed, int quiet);
 static void test_pairing(int drop_every) { test_pairing_seed(drop_every, 0, 0); }
 
@@ -104,7 +121,7 @@ static int test_pairing_seed(int drop_every, unsigned seed, int quiet)
     CHECK(h != NULL);
     if (!h) return 0;
 
-    host_pair(h, 30);
+    CHECK(pick_first(h, 30) == HOST_PAIR_STARTED);
     run(h, 15000);
 
     CHECK(s.connects == 1);
@@ -233,7 +250,7 @@ static void test_stale_link(void)
     h = open_host(sim, &s);
     CHECK(h != NULL);
     if (!h) { sim_free(sim); return; }
-    host_pair(h, 60);
+    CHECK(pick_first(h, 60) == HOST_PAIR_STARTED);
     run(h, 30000);
     CHECK(sim_stale_cleared(sim) == 1);
     CHECK(s.connects == 1);
@@ -330,7 +347,7 @@ static void test_generic_pad(void)
     }
     sim = sim_new(&pad);
     h = open_host(sim, &s);
-    host_pair(h, 30);
+    CHECK(pick_first(h, 30) == HOST_PAIR_STARTED);
     run(h, 10000);
     CHECK(s.connects == 1);
     CHECK(s.info.profile && strcmp(s.info.profile, "Generic HID") == 0);
@@ -372,7 +389,7 @@ static void test_switch_pad(void)
     pad.report_len = 49;
     sim = sim_new(&pad);
     h = open_host(sim, &s);
-    host_pair(h, 30);
+    CHECK(pick_first(h, 30) == HOST_PAIR_STARTED);
     run(h, 10000);
     CHECK(s.connects == 1);
     CHECK(s.info.profile && strcmp(s.info.profile, "Switch Pro") == 0);
@@ -438,7 +455,7 @@ static void test_garbage(void)
     pad.needs_output = 1;
     sim = sim_new(&pad);
     h = open_host(sim, &s);
-    host_pair(h, 30);
+    CHECK(pick_first(h, 30) == HOST_PAIR_STARTED);
     run(h, 8000);
     CHECK(s.connects == 1);
     for (i = 0; i < 20000; i++) {
@@ -505,6 +522,381 @@ static void test_sdp_parse(void)
     CHECK(!sdp_find_ids(list, 10, &vid, &pid));
 }
 
+/* ---- pairing only what the user picks -------------------------------------- */
+
+static void pairing_pad(sim_pad *pad, const unsigned char addr[6], const char *name, int in_eir)
+{
+    memset(pad, 0, sizeof *pad);
+    pad->mode = SIM_WAIT_PAIRING;
+    memcpy(pad->addr, addr, 6);
+    pad->cod = 0x002508;                /* DualShock 4 and DualSense alike */
+    snprintf(pad->name, sizeof pad->name, "%s", name);
+    pad->name_in_eir = in_eir;
+    pad->vid = 0x054C;
+    pad->pid = 0x05C4;
+    pad->report_len = ds4_report(pad->report);
+    pad->needs_output = 1;
+}
+
+static void test_no_autopair(void)
+{
+    static const unsigned char addr[6] = { 0x61, 0x62, 0x63, 0x64, 0x65, 0x66 };
+    host_found_info f;
+    sim_pad pad;
+    sim_t *sim;
+    host_t *h;
+    seen s;
+
+    printf("a search lists the pad with its name and pairs nothing until it is picked\n");
+    unlink(DB);
+    memset(&s, 0, sizeof s);
+    pairing_pad(&pad, addr, "Wireless Controller", 0);
+    sim = sim_new(&pad);
+    h = open_host(sim, &s);
+    host_pair(h, 60);
+    run(h, 25000);
+    CHECK(s.connects == 0 && !sim_link_up(sim));
+    CHECK(host_paired_count(h) == 0);
+    CHECK(sim_name_requests(sim) >= 1);
+    CHECK(host_found_get(h, 0, &f));
+    CHECK(memcmp(f.addr, addr, 6) == 0 && !f.le && f.cod == 0x002508);
+    CHECK(strcmp(f.name, "Wireless Controller") == 0 && !f.name_pending);
+    CHECK(f.block == HOST_OK && !f.paired);
+    CHECK(!host_found_get(h, 1, &f));
+    CHECK(host_pair_addr(h, addr, 0) == HOST_PAIR_STARTED);
+    run(h, 10000);
+    CHECK(s.connects == 1 && host_paired_count(h) == 1);
+    CHECK(!host_found_get(h, 0, &f));       /* picked: no longer listed */
+    CHECK(host_forget(h, addr));            /* forgotten in the window: stays forgotten */
+    run(h, 25000);
+    CHECK(host_paired_count(h) == 0 && s.connects == 1);
+    {
+        static const unsigned char other[6] = { 1, 2, 3, 4, 5, 6 };
+        CHECK(host_pair_addr(h, other, 0) == HOST_PAIR_UNKNOWN);
+    }
+    host_close(h);
+    sim_free(sim);
+}
+
+static void test_dualsense_refused(void)
+{
+    static const unsigned char addr[6] = { 0x71, 0x72, 0x73, 0x74, 0x75, 0x76 };
+    host_found_info f;
+    sim_pad pad;
+    sim_t *sim;
+    host_t *h;
+    seen s;
+
+    printf("a DualSense (named in its inquiry response) is refused unless confirmed\n");
+    unlink(DB);
+    memset(&s, 0, sizeof s);
+    pairing_pad(&pad, addr, "DualSense Wireless Controller", 1);
+    pad.pid = 0x0CE6;
+    sim = sim_new(&pad);
+    h = open_host(sim, &s);
+    host_pair(h, 60);
+    run(h, 3000);
+    CHECK(host_found_get(h, 0, &f));
+    CHECK(strcmp(f.name, "DualSense Wireless Controller") == 0);
+    CHECK(f.block == HOST_BLOCK_DUALSENSE);
+    CHECK(sim_name_requests(sim) == 0);     /* the name came with the inquiry */
+    CHECK(host_pair_addr(h, addr, 0) == HOST_PAIR_BLOCKED);
+    run(h, 15000);
+    CHECK(s.connects == 0 && !sim_link_up(sim) && host_paired_count(h) == 0);
+    CHECK(host_found_get(h, 0, &f) && f.block == HOST_BLOCK_DUALSENSE);
+    CHECK(host_pair_addr(h, addr, 1) == HOST_PAIR_STARTED);    /* the user insists */
+    run(h, 10000);
+    CHECK(sim_link_up(sim) && host_paired_count(h) == 1);
+    host_close(h);
+    sim_free(sim);
+}
+
+static void test_dualsense_picked_early(void)
+{
+    static const unsigned char addr[6] = { 0x31, 0x32, 0x33, 0x34, 0x35, 0x36 };
+    host_found_info f;
+    sim_pad pad;
+    sim_t *sim;
+    host_t *h;
+    seen s;
+    long end;
+
+    printf("a DualSense picked before its name is known is still refused\n");
+    unlink(DB);
+    memset(&s, 0, sizeof s);
+    pairing_pad(&pad, addr, "DualSense Edge Wireless Controller", 0);
+    sim = sim_new(&pad);
+    h = open_host(sim, &s);
+    host_pair(h, 60);
+    end = sim_now() + 5000;
+    while (sim_now() < end && !host_found_get(h, 0, &f)) host_poll(h, 5);
+    CHECK(host_found_get(h, 0, &f) && f.name_pending && f.block == HOST_OK);
+    CHECK(host_pair_addr(h, addr, 0) == HOST_PAIR_STARTED);    /* checks the name first */
+    run(h, 15000);
+    CHECK(sim_name_requests(sim) >= 1);
+    CHECK(s.connects == 0 && !sim_link_up(sim) && host_paired_count(h) == 0);
+    CHECK(host_found_get(h, 0, &f) && f.block == HOST_BLOCK_DUALSENSE && !f.name_pending);
+    host_close(h);
+    sim_free(sim);
+}
+
+static void test_console_link_refused(void)
+{
+    static const unsigned char addr[6] = { 0x41, 0x42, 0x43, 0x44, 0x45, 0x46 };
+    unsigned char cc[11];
+    host_found_info f;
+    sim_pad pad;
+    sim_t *sim;
+    host_t *h;
+    seen s;
+
+    printf("a pad the console's own driver linked to is refused, whatever its name\n");
+    unlink(DB);
+    memset(&s, 0, sizeof s);
+    pairing_pad(&pad, addr, "Wireless Controller", 1);
+    sim = sim_new(&pad);
+    h = open_host(sim, &s);
+    cc[0] = 0;                          /* the system's driver connected it */
+    put16(cc + 1, 0x0055);
+    memcpy(cc + 3, addr, 6);
+    cc[9] = 1;
+    cc[10] = 0;
+    sim_inject_event(sim, 0x03, cc, 11);
+    run(h, 500);
+    host_pair(h, 60);
+    run(h, 3000);
+    CHECK(host_found_get(h, 0, &f) && f.block == HOST_BLOCK_CONSOLE);
+    CHECK(host_pair_addr(h, addr, 0) == HOST_PAIR_BLOCKED);
+    run(h, 10000);
+    CHECK(s.connects == 0 && host_paired_count(h) == 0);
+    host_close(h);
+    sim_free(sim);
+}
+
+static void test_pad_calling_in(void)
+{
+    static const unsigned char addr[6] = { 0x81, 0xF4, 0x55, 0xD8, 0x17, 0xE4 };
+    host_found_info f;
+    host_pick_info k;
+    sim_pad pad;
+    sim_t *sim;
+    host_t *h;
+    seen s;
+
+    printf("a picked pad that keeps calling the console (8BitDo) is answered and paired\n");
+    unlink(DB);
+    memset(&s, 0, sizeof s);
+    pairing_pad(&pad, addr, "8Bitdo SN30 Pro", 1);
+    pad.pages_host = 1;
+    sim = sim_new(&pad);
+    h = open_host(sim, &s);
+    host_pair(h, 60);
+    run(h, 3000);
+    CHECK(host_found_get(h, 0, &f) && f.block == HOST_OK);     /* calling in is not "the console's" */
+    CHECK(host_pair_addr(h, addr, 0) == HOST_PAIR_STARTED);
+    run(h, 30000);
+    CHECK(s.connects == 1 && host_paired_count(h) == 1);
+    CHECK(host_pick_get(h, &k) && k.state == HOST_PICK_DONE);
+    CHECK(sim_pages(sim) <= PICK_TRIES_MAX);
+    host_close(h);
+    sim_free(sim);
+}
+
+static void test_names_and_disconnect(void)
+{
+    static const unsigned char addr[6] = { 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6 };
+    host_paired_info pi;
+    pad_info info;
+    pad_state st;
+    sim_pad pad;
+    sim_t *sim;
+    host_t *h;
+    seen s;
+
+    printf("a paired pad keeps its name across a restart; Disconnect drops the link only\n");
+    unlink(DB);
+    memset(&s, 0, sizeof s);
+    pairing_pad(&pad, addr, "8Bitdo SN30 Pro", 1);
+    sim = sim_new(&pad);
+    h = open_host(sim, &s);
+    host_pair(h, 60);
+    run(h, 2000);
+    CHECK(host_pair_addr(h, addr, 0) == HOST_PAIR_STARTED);
+    run(h, 10000);
+    CHECK(s.connects == 1);
+    CHECK(host_pad_get(h, s.slot, &info, &st) && strcmp(info.name, "8Bitdo SN30 Pro") == 0);
+    CHECK(host_paired_get(h, 0, &pi) && strcmp(pi.name, "8Bitdo SN30 Pro") == 0 && pi.connected);
+
+    CHECK(host_disconnect(h, s.slot) == 1);
+    run(h, 2000);
+    CHECK(s.disconnects == 1 && !sim_link_up(sim));
+    CHECK(host_paired_count(h) == 1);                   /* still paired */
+    CHECK(host_disconnect(h, s.slot) == 0);             /* nothing there now */
+    host_close(h);
+    sim_free(sim);
+
+    /* The name is in the store. */
+    pad.mode = SIM_RECONNECT;
+    sim = sim_new(&pad);
+    memset(&s, 0, sizeof s);
+    h = open_host(sim, &s);
+    CHECK(host_paired_count(h) == 1);
+    CHECK(host_paired_get(h, 0, &pi) && strcmp(pi.name, "8Bitdo SN30 Pro") == 0 && !pi.connected);
+    host_close(h);
+    sim_free(sim);
+}
+
+static void test_old_store(void)
+{
+    static const unsigned char hdr[8] = { 'A', 'N', 'Y', 'P', 'A', 'D', '0', '2' };
+    unsigned char rec[64];
+    host_paired_info pi;
+    sim_pad pad;
+    sim_t *sim;
+    host_t *h;
+    seen s;
+    FILE *f;
+
+    printf("a store from before names (format 02) is read, nameless\n");
+    memset(rec, 0, sizeof rec);
+    rec[0] = 0x11; rec[1] = 0x22; rec[2] = 0x33; rec[3] = 0x44; rec[4] = 0x55; rec[5] = 0x66;
+    rec[23] = 0x4C; rec[24] = 0x05;                     /* vid 054c */
+    rec[25] = 0xC4; rec[26] = 0x05;                     /* pid 05c4 */
+    f = fopen(DB, "wb");
+    CHECK(f != NULL);
+    if (!f) return;
+    fwrite(hdr, 1, 8, f);
+    fwrite(rec, 1, sizeof rec, f);
+    fclose(f);
+    memset(&pad, 0, sizeof pad);
+    memset(&s, 0, sizeof s);
+    pad.mode = SIM_RECONNECT;
+    sim = sim_new(&pad);
+    h = open_host(sim, &s);
+    CHECK(host_paired_count(h) == 1);
+    CHECK(host_paired_get(h, 0, &pi) && pi.vid == 0x054C && pi.pid == 0x05C4 && pi.name[0] == '\0');
+    host_close(h);
+    sim_free(sim);
+}
+
+static void test_stale_link_on_pick(void)
+{
+    static const unsigned char addr[6] = { 0x2B, 0x5E, 0x42, 0xE9, 0xB6, 0x98 };
+    host_found_info f;
+    host_pick_info k;
+    sim_pad pad;
+    sim_t *sim;
+    host_t *h;
+    seen s;
+
+    printf("a picked pad the controller already holds a link to (0x0b, nothing to accept) is freed and paired\n");
+    unlink(DB);
+    memset(&s, 0, sizeof s);
+    pairing_pad(&pad, addr, "Pro Controller", 1);
+    pad.stale_in_complete = 1;
+    sim = sim_new(&pad);
+    sim_stale_link(sim, 0x27);
+    h = open_host(sim, &s);
+    host_pair(h, 60);
+    run(h, 2000);
+    CHECK(host_found_get(h, 0, &f));
+    CHECK(host_pair_addr(h, addr, 0) == HOST_PAIR_STARTED);
+    run(h, 25000);
+    CHECK(sim_stale_cleared(sim) == 1);
+    CHECK(s.connects == 1 && host_paired_count(h) == 1);
+    CHECK(host_pick_get(h, &k) && k.state == HOST_PICK_DONE);
+    host_close(h);
+    sim_free(sim);
+}
+
+static void test_pick_gives_up(void)
+{
+    static const unsigned char addr[6] = { 0x91, 0x92, 0x93, 0x94, 0x95, 0x96 };
+    host_found_info f;
+    host_pick_info k;
+    sim_pad pad;
+    sim_t *sim;
+    host_t *h;
+    seen s;
+
+    printf("a picked pad that never answers is tried a few times, then reported\n");
+    unlink(DB);
+    memset(&s, 0, sizeof s);
+    pairing_pad(&pad, addr, "Wireless Controller", 1);
+    pad.no_answer = 1;
+    sim = sim_new(&pad);
+    h = open_host(sim, &s);
+    host_pair(h, 60);
+    run(h, 3000);
+    CHECK(host_found_get(h, 0, &f));
+    CHECK(host_pair_addr(h, addr, 0) == HOST_PAIR_STARTED);
+    run(h, 70000);
+    CHECK(s.connects == 0);
+    CHECK(sim_pages(sim) >= 2 && sim_pages(sim) <= PICK_TRIES_MAX);    /* no tight loop */
+    CHECK(host_pick_get(h, &k) && k.state == HOST_PICK_FAILED && k.why == HOST_WHY_NO_ANSWER);
+    CHECK(strcmp(k.name, "Wireless Controller") == 0);
+    host_close(h);
+    sim_free(sim);
+}
+
+static void test_pick_paged_fresh(void)
+{
+    static const unsigned char addr[6] = { 0x2B, 0x5E, 0x42, 0xE9, 0xB6, 0x98 };
+    host_found_info f;
+    host_pick_info k;
+    sim_pad pad;
+    sim_t *sim;
+    host_t *h;
+    seen s;
+
+    printf("a pad picked long after it was found is paged right after it next answers the search\n");
+    unlink(DB);
+    memset(&s, 0, sizeof s);
+    pairing_pad(&pad, addr, "Pro Controller", 1);
+    pad.page_window_ms = 1000;          /* answers a page only just after an inquiry */
+    sim = sim_new(&pad);
+    h = open_host(sim, &s);
+    host_pair(h, 60);
+    run(h, 3000);
+    CHECK(host_found_get(h, 0, &f));
+    run(h, 10000);                      /* the user takes a while to tap Pair */
+    CHECK(host_pair_addr(h, addr, 0) == HOST_PAIR_STARTED);
+    run(h, 30000);
+    CHECK(s.connects == 1 && host_paired_count(h) == 1);
+    CHECK(host_pick_get(h, &k) && k.state == HOST_PICK_DONE);
+    host_close(h);
+    sim_free(sim);
+}
+
+static void test_unheard_call_answered(void)
+{
+    static const unsigned char addr[6] = { 0x81, 0xF4, 0x55, 0xD8, 0x17, 0xE4 };
+    host_found_info f;
+    host_pick_info k;
+    sim_pad pad;
+    sim_t *sim;
+    host_t *h;
+    seen s;
+
+    printf("a picked pad calling the console unheard (0x0b on every page) is answered blindly\n");
+    unlink(DB);
+    memset(&s, 0, sizeof s);
+    pairing_pad(&pad, addr, "8Bitdo SN30 Pro", 1);
+    pad.pages_host = 1;
+    pad.call_unheard = 1;
+    sim = sim_new(&pad);
+    h = open_host(sim, &s);
+    host_pair(h, 60);
+    run(h, 2000);
+    CHECK(host_found_get(h, 0, &f));
+    CHECK(host_pair_addr(h, addr, 0) == HOST_PAIR_STARTED);
+    run(h, 40000);
+    CHECK(s.connects == 1 && host_paired_count(h) == 1);
+    CHECK(host_pick_get(h, &k) && k.state == HOST_PICK_DONE);
+    host_close(h);
+    sim_free(sim);
+}
+
 int main(void)
 {
     test_sdp_parse();
@@ -519,6 +911,17 @@ int main(void)
     test_garbage();
     test_generic_pad();
     test_switch_pad();
+    test_no_autopair();
+    test_dualsense_refused();
+    test_dualsense_picked_early();
+    test_console_link_refused();
+    test_pad_calling_in();
+    test_pick_gives_up();
+    test_stale_link_on_pick();
+    test_names_and_disconnect();
+    test_old_store();
+    test_pick_paged_fresh();
+    test_unheard_call_answered();
     test_pairing_stress();
     printf(g_fail ? "%d check(s) failed\n" : "all host checks passed\n", g_fail);
     return g_fail != 0;

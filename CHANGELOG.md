@@ -1,9 +1,125 @@
 # Changelog
 
-Every ELF is `dist/AnyPad-PS5-<version>.elf`, with a `.sha256` beside it. The
+Every ELF is `dist/AnyACE-PS5-<version>.elf` (`AnyPad-PS5-…` up to 0.5.5), with a `.sha256` beside it. The
 version is set in `src/version.h` and is also in the first line of the log, in
 the start-up notification, on the web page, and in the binary
-(`strings AnyPad-PS5-*.elf | grep anypad-version`).
+(`strings AnyACE-PS5-*.elf | grep anypad-version`).
+
+## 0.9.3-beta
+
+- **Rumble probe, second round.** The first round proved the call works: `scePadVirtualDeviceGetRemoteSetting` returns 0 on 11.60 and fills a structure of at least 57 bytes whose byte 0 flips to 1 whenever something new arrived. The probe now shows the first 96 bytes, lists every byte that changed with its old and new value, polls 20 times a second, and, every 4 s, **sets vibration and the light bar on the virtual pad itself** through the ordinary pad calls (big motor, small motor, red, blue), so the log shows which bytes answer to which motor without depending on a game.
+- A USB device that is not a game pad is left alone for ten minutes rather than one (a Razer device was being looked at every minute).
+
+## 0.9.2-beta
+
+- **Rumble probe (experiment)**, a button on each player card. Games' rumble still reaches no pad: the console offers no documented way for the owner of a virtual pad to learn what a game asks of it. libScePad does export an undocumented `scePadVirtualDeviceGetRemoteSetting`, which is what Remote Play would need for exactly this. The probe calls it ten times a second for 90 s (with a large zeroed buffer in every argument, since its arguments are unknown) and logs its result and every change in what it writes. Play a rumbling part of a game with the probe running and send the log; if the game's rumble shows up in it, the next build will drive the pads with it.
+- Supported firmwares: 11.60 up to 13.60 (the tile only up to 13.4x).
+
+## 0.9.1-beta
+
+- **Fix: the payload did not start at all on firmware 13.60.** That firmware does not export `sceAppInstUtilAppInstallTitleDir` (the call that puts the AnyACE tile in the Media row), and the loader silently refuses to start a payload with an import it cannot resolve: no notification, no log. The function is now looked up at run time; where it is missing, the tile is skipped and everything else runs (found by Nicolas8aa on the sibling project ps5-wireless-pads, issue 3).
+- Known on 13.60, from the same report: the Bluetooth chip's first HCI function (the one AnyACE uses) accepts LE scan commands but never reports any advertisement, so **Bluetooth LE pads** (Xbox Series over Bluetooth, the ASUS pad's Bluetooth mode) cannot be found there; Classic pads (DualShock 4, 8BitDo, Switch Pro) and wired pads are unaffected.
+
+## 0.9.0-beta
+
+- **Wired controllers beyond Xbox One/Series.** On a USB port, AnyACE now also takes: **Xbox 360** wired pads and the many pads and **2.4 GHz dongles** that imitate one (XInput: ShanWan, Machenike, 8BitDo adapters in X-mode…), the **Xbox 360 wireless receiver** (its first pad), the **DualShock 4** and **DualShock 3** over USB, the **Switch Pro** and NSO pads over USB, and **any other HID game pad**, read through its own report descriptor (the same descriptor-driven profile as over Bluetooth, with the `maps/` files honoured). Four wired slots, P5–P8. Lights are set per slot (360 player light, DualShock light bar), rumble reaches them all through Test rumble. Protocol details follow the Linux drivers (xpad, hid-sony, hid-nintendo); the OmniPad-PS5 fork (GPLv3, Diego Lima) pointed the way to which pads matter and to the dongles' wake-up request.
+- New profile: DualShock 3 (USB report and output shapes; it cannot be paired over Bluetooth here).
+- The Wired controllers list shows each pad's protocol kind.
+- Firmware: when the payload SDK cannot read this process's credentials (a kernel it does not know) but the process already runs as root (kstuff on newer firmwares), virtual pads are tried without raising credentials instead of giving up. Note: the v0.44 SDK does know 13.60 (the 0.8.1 note saying otherwise was wrong), so on 13.60 this fallback should not even be needed.
+- Tests: XInput reports, frames and messages; the DualShock 3 profile; the USB quirks (wake requests, Switch handshake, DualShock 4 USB output); the fuzzer covers the XInput parsers and the DualShock 3 profile.
+
+## 0.8.2-beta
+
+- **The Bluetooth chip is found by its USB class** (an interface of class e0/01/01 with HCI endpoints), at its usual `/dev/ugen0.2` first and anywhere else otherwise; the log says where. Other console models may number it differently. The wired-pad scanner skips any Bluetooth chip the same way.
+- **Virtual pad identification accepts the kernel-log line shape reported on firmware 13.60** (`DEVICE_ADDED: DeviceId:0x… subType:22`, with no type token) beside the one older firmwares print.
+- README: do not run OmniPad-PS5 beside AnyACE (it shares the state folder and stops AnyACE on start).
+
+## 0.8.1-beta
+
+- **Fix: a Bluetooth LE pad the chip refused to connect (0x0c) was retried dozens of times a second and never paired** (an ASUS pad on a console, after being forgotten). The LE path now gets what the Classic path had: tries at least 4 s apart, at most 4, then the page says why. On "command disallowed" AnyACE cancels the connection attempt the chip is still busy with, and on a repeat closes the stale links the chip holds, before trying again.
+- The page's reason for that case: "the console's Bluetooth chip refused to start the connection", with what to do.
+- Pick retries: a connection that comes up resets the count of tries, so pairing retries after a lost packet are not cut short (the LE loss test is back to 30/30); 24 tries of any kind is the ceiling.
+- **Compact player cards**: the slot number as a coloured chip beside the profile, smaller sticks, the actions in two rows (Test · Remap · Rumble, then Press PS · Disconnect) instead of a column, and free slots as short rows instead of tall empty boxes.
+- Firmware note (corrected in 0.9.0): the payload SDK (ps5-payload-sdk v0.44) does know firmware 13.60 (support added 2026-08-02); the 13.60 kernel constants are in the ELF. Why AnyACE did not start on a 13.60 console is still to be found from that console's log.
+
+## 0.8.0-beta
+
+- **Remap** on every player card: choose what each of the pad's buttons means to the console (any button, or nothing), swap the sticks and invert any axis. Press a button on the pad and its row lights up. Saved per pad model in `/data/anypad/remap/VVVV_PPPP.remap` (plain text, editable by hand) and applied every time that pad connects, for Bluetooth and wired pads alike. `GET/POST /api/remap?slot=N`; the state carries each pad's `raw` buttons beside the remapped ones.
+- **Settings** section: *When a pad connects: do nothing / press PS automatically* (for pads without a PS button), and *Give pads to: the console's choice / a signed-in user*, listed by name. Saved in `/data/anypad/settings.txt`; changing the user hands the connected pads over at once. `GET/POST /api/settings`.
+- **Battery** for wired Xbox pads (their battery messages) and for Bluetooth LE pads with a Battery Service (read on connect and every minute), shown on the card.
+- **Rumble on the pad side**: Xbox USB pads and Switch Pro pads can now be rumbled, and every card has a **Test rumble** button. What is still missing is the console side: libScePad offers no way to read a game's rumble back from a virtual pad, so games' rumble reaches no pad yet (the DualShock 4 included). The pad side is ready for when that is found.
+- Tests: the remapping (applying, both text forms, the file), GIP battery and rumble messages, Switch rumble encoding, the LE Battery Service through the simulator; the fuzzer covers the remap parsers.
+
+## 0.7.5-beta
+
+- **Fix: a pad could not be paired while the Bluetooth chip held a dead link to it.** Paging it answered "connection already exists" (0x0b) and there was no call from the pad to answer (0x0c): a link nobody owns, left by an earlier run or made from a call of the pad's that the controller took in without AnyACE hearing of it (an 8BitDo in Switch mode, on a console). The stale-link clean-up that already handled the other way this failure is reported now runs here too, so the next page gets through.
+
+## 0.7.4-beta
+
+- **Fix: Bluetooth LE pads dropped every 43 s (reason 0x22).** An LE pad asks the host for new connection parameters to save power (an ASUS ROG pad does it soon after going idle). AnyACE had that event switched on but never answered it, so the controller timed the procedure out after 40 s and dropped the link; the pad then reconnected and the console asked which user it was for, again. Sane requests are now accepted at once (and logged), silly ones refused.
+
+## 0.7.3-beta
+
+- **Clear log** button on the page (`POST /api/log/clear`): empties the log file; logging carries on after it.
+- **Fix: wired pads dropped every few seconds while idle (0.7.2).** An idle pad's read simply times out every second on this platform; 0.7.2 counted that as a failing transfer, rebuilt the USB connection after 2 s and dropped the pad, and the console re-added it as a new device each time (the "sleep" with the user prompt coming back). Timed-out and cancelled reads now mean "nothing arrived". A pad is gone only when the system says it is detached, its node vanishes, or reads fail with a real USB error without a break for 2 s (then one rebuild, then dropped). Real read errors are logged, with the USB error code.
+
+## 0.7.2-beta
+
+- **Fix: wired pads froze when left idle.** Most Xbox-protocol pads send a report only when something changes; 0.7.0 took 3 s of silence for a stall, re-initialised the pad under the player's hands and, after 9 s, rebuilt its USB connection, which lost input for up to half a minute, and dropped the pad after 30 s idle. Silence now means nothing: an idle pad stays connected and "Live". Only a pad seen streaming reports (20+ a second) is re-initialised when it goes quiet; a pad is gone only when its USB node vanishes or its transfers keep failing (one rebuild, then dropped). The periodic wake-up is off by default; `/data/anypad/gip_keepalive` holding a number of seconds turns it on, for a pad that switches itself off.
+- **8BitDo in Switch mode: back to the simple report.** Such pads take the "full report" request and then send nothing. After four rounds without it, AnyACE now asks for the simple report (0x3F, all buttons and both sticks) back.
+- **Diagnostics for a silent pad**: the first reports a profile does not take are logged in full (id, length, bytes), input arriving on the HID control channel is taken as input and logged, and each player card and `GET /api/state` count the reports taken and not taken (`other`, `rid_other`).
+- The log tail served to the page is four times longer, and the kernel lines captured while a virtual pad is identified are kept only when they concern pads and users (they drowned the log).
+
+## 0.7.1-beta
+
+- **Pad names.** The name a pad gave during the search ("8Bitdo SN30 Pro", "Pro Controller", "Wireless Controller") is kept with its pairing and shown in Paired pads and on its player card. Pads paired before this version show "Unnamed pad" until paired again. The store file gains a format (`ANYPAD03`, 128-byte records); the old one is read as before, without names.
+- **Disconnect** button on each Bluetooth player card: drops the link without forgetting the pad (switch it on again to reconnect). `POST /api/disconnect?slot=N`.
+- Player cards are wider (three per row on a desktop, one on a phone), with the pad's name and address on them.
+- Tests: names survive a restart, Disconnect keeps the pairing, an old-format store loads.
+
+## 0.7.0-beta
+
+- **Wired Xbox controllers.** Xbox One / Series pads and GIP clones (GameSir, PowerA, 8BitDo in Xbox mode…) plugged into a USB port are picked up by themselves, brought up (power on, authenticate, Guide LED), kept awake and fed to the console as virtual DualSense pads in slots P5 and P6, with the Guide button as PS. Hot-plugging works: AnyACE looks for new pads every 2.5 s and drops one after 30 s of silence. Ported from [FGG-XSense](https://github.com/FGGstore/FGG-XSense) by FGG STORE (GPL-3.0), rewritten to run from AnyACE's loop without blocking, follow two pads and report to the page. Xbox 360 pads (XInput) are not handled.
+- **Wired controllers on the page**: a section listing every wired pad detected (name, ids, USB node, state: starting / live / no input), and the live ones as player cards P5 / P6 with a USB tag.
+- **Fix: the console's "who is using this controller?" prompt closed before you could choose.** When the console answered "user not signed in" (0x809b0081) to the virtual pad's binding (seen after switching profiles), AnyACE deleted the virtual pad at once, which closed the prompt and left the pad doing nothing while the page showed it connected. Now the virtual pad is **left alive and fed**, so the console's prompt can assign it; AnyACE tries every other signed-in user, retries every 10 s, and each player card has a **Retry binding** button (`POST /api/bind?slot=N`). The card shows the virtual pad's state ("The console hasn't given this pad to a user yet", with what to do) and a count of reports received from the pad, so a pad that sends nothing is visible too.
+- A report the profile does not understand is logged once per pad (id and length).
+- New in `GET /api/state`: `wired`, and per pad `vpad`, `reports`, `rid`, `usb`.
+- Tests: the GIP descriptor walk (plain and composite devices, a HID pad), the init and ack messages, input reports and the Guide button; the fuzzer covers the GIP parsers.
+
+## 0.6.3-beta
+
+- **Fix: picked pads were paged too late.** On the console, a pad picked more than a second or two after it answered the search did not answer the page (Switch Pro: 0x04 page timeout; the clock offset from the inquiry had gone stale, and some pads only take a page right after answering an inquiry). 0.5.5 paged at once because it auto-paired; 0.6.x waited for the user's tap. Now a picked pad is paged **the moment it next answers the search**, with a fresh clock offset, as 0.5.5 did.
+- **Fix: 8BitDo kept failing with 0x0b even in 0.6.2.** Its own call to the console never reached AnyACE (the console's driver takes the event). Now, after a 0x0b page failure on the picked pad, AnyACE answers the pad's call blindly; if there is no such call the controller says so and the next search answer is paged instead.
+- A pick keeps the search alive for at least 25 s, so the pad still gets paged if the window was about to close.
+- The log line for a page shows the page-scan mode and clock offset used.
+- Tests: a pad that only takes a page just after an inquiry, and one whose call is never heard.
+
+## 0.6.2-beta
+
+- **Fix: 8BitDo (and other pads that remember the console) would not pair.** Such a pad keeps calling the console by itself while in pairing mode; AnyACE ignored the call and paged the pad at the same time, so every try failed with "connection already exists" (0x0b), and the pad was wrongly marked "the console is using this pad". Now, when the pad you picked calls in, AnyACE answers it and pairs over that link, and only a link that really came up counts as the console's.
+- **Fix: no more endless retries.** A picked pad is tried at most 4 times, 4 s or more apart, then the page says why it was not paired (didn't answer, kept connecting to the console, it's a DualSense) and what to do.
+- A confirmed ("Pair anyway") pad that the console's own driver really holds is taken from it: AnyACE closes only that link, then pages the pad.
+- The page shows the pick's progress: checking its name, pairing (try n of 4), paired, or why not. New `pick` object in `GET /api/state`.
+- Pairing otherwise behaves as in 0.6.0.
+
+## 0.6.1-beta
+
+- **Everything on the console is in English now**: the web menu, every notification, the Bluetooth error text and the button names in the menu hotkey text ("Pulsar PS" is now **Press PS**, "Olvidar" is **Forget**, "Emparejar" is **Search for pads**).
+- **New web menu design**: a dark stage lit in the icon's colours; a search ring that counts down the 60 s search; found pads with signal bars and a clear Pair button (red "Pair anyway" for a blocked DualSense); four **player slots** always shown, each topped with the light bar colour AnyACE gives that pad (P1 blue, P2 red, P3 green, P4 pink), with live sticks, triggers, buttons and battery; **Press PS** now sits on the connected player's card. The second-user help folds away. Works on the PS5 browser and on phones; keyboard focus visible; respects reduced motion. No external fonts or files: still one page inside the ELF.
+- **Test buttons** on each connected player: a full-size pad that lights up every button as the console receives it (after the pad's mapping), live sticks with the range covered so far, trigger fill, a "buttons tested" checklist (n / 18) and full-range / full-press checks. Updates 10 times a second while open; Close, Esc or a tap outside closes it.
+
+## 0.6.0-beta (AnyACE)
+
+- **Safe pairing: nothing is paired by itself any more.** A search (the Pair button or the Media row) lists the pads it finds on the web page, with their name, signal and "paired before", and you tap **Pair** on yours. Before, the first gamepad found was paired at once, and a DualSense has the same Bluetooth class as a DualShock 4, so the console's own DualSense could be taken.
+- A pad's name is read before it is paged (from its inquiry response, or asked between inquiries). A pad named "DualSense…" is marked and only paired after a confirmation ("Pair anyway"). If you pick a pad before its name is known, AnyACE asks for the name first and refuses a DualSense.
+- Any address the console's own Bluetooth driver connects to, or that pages the console, is marked "the console is using this pad" and also needs that confirmation, whatever its name.
+- A picked pad is retried for the rest of the search if pairing fails (an old link from an earlier run, lost packets), as the automatic search used to do; only that pad. Forgetting it ends the retry.
+- Bluetooth LE pads (Xbox) go through the same list.
+- New API: `found` in `GET /api/state`; `POST /api/pair?addr=XX:XX:XX:XX:XX:XX[&force=1]` (409 when blocked or busy). `POST /api/pair` still starts the search.
+- Renamed **AnyACE**: Media row tile, new tile icon, web page, notifications and the ELF name. The state folder (`/data/anypad`), the tile's title id (`ANYP00001`) and paired pads are unchanged, so the existing tile is updated in place.
+- `tools/build-elf-docker.sh` reads its sources from `ps5.mk`.
+- Tests: the simulator now ends inquiries and answers name requests; new tests for no auto-pairing, a named DualSense, a DualSense picked before its name is known, a pad linked by the console, and forgetting during a search. The fuzzer covers the name parser.
+- Not changed: inquiry length and parameters, chip set-up, no HCI reset.
 
 ## 0.5.5-beta
 

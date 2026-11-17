@@ -44,6 +44,11 @@ struct sim {
     long t_report;
     int deaf;
     int ssp, scan;
+    int name_reqs;
+    long inq_end;                   /* when the running inquiry ends, 0: none */
+    long calling_until, next_call;  /* pages_host: its own pending call */
+    long t_inq_resp;                /* when it last answered an inquiry */
+    int pages;
 };
 
 static long g_clock = 1000;
@@ -126,6 +131,16 @@ static void ev_handle(sim_t *s, unsigned char code, unsigned char status, int ex
     put16(p + 1, HANDLE);
     p[3] = x;
     event(s, code, p, 3 + extra);
+}
+
+static void conn_failed(sim_t *s, unsigned char status)
+{
+    unsigned char p[11] = { 0 };
+
+    p[0] = status;
+    memcpy(p + 3, s->pad.addr, 6);
+    p[9] = 1;
+    event(s, 0x03, p, 11);
 }
 
 static void conn_complete(sim_t *s)
@@ -413,6 +428,7 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
     }
     case 0x0401:        /* Inquiry */
         cmd_status(s, op, 0);
+        s->inq_end = g_clock + (long)p[3] * 1280;      /* length in 1.28 s units */
         if (s->pad.mode == SIM_WAIT_PAIRING && !s->connected) {
             unsigned char r[255] = { 0 };
             r[0] = 1;
@@ -422,19 +438,66 @@ static int op_cmd(void *ctx, unsigned op, const void *params, int plen)
             r[10] = (unsigned char)(s->pad.cod >> 8);
             r[11] = (unsigned char)(s->pad.cod >> 16);
             put16(r + 12, 0x1234);
+            if (s->pad.name_in_eir && s->pad.name[0]) {    /* EIR: complete local name */
+                size_t n = strlen(s->pad.name);
+                r[15] = (unsigned char)(n + 1);
+                r[16] = 0x09;
+                memcpy(r + 17, s->pad.name, n);
+            }
             event(s, 0x2F, r, 255);
+            s->t_inq_resp = g_clock;
         }
         break;
+    case 0x0402:        /* Inquiry Cancel */
+        s->inq_end = 0;
+        cmd_ok(s, op);
+        break;
+    case 0x0419: {      /* Remote Name Request */
+        unsigned char r[255] = { 0 };
+        cmd_status(s, op, 0);
+        s->name_reqs++;
+        memcpy(r + 1, p, 6);
+        if (memcmp(p, s->pad.addr, 6) != 0 || !s->pad.name[0] || s->pad.mode != SIM_WAIT_PAIRING) {
+            r[0] = 0x04;                /* page timeout */
+        } else {
+            memcpy(r + 7, s->pad.name, strlen(s->pad.name));
+        }
+        event(s, 0x07, r, 255);
+        break;
+    }
     case 0x0405:        /* Create Connection */
+        s->pages++;
         if (s->stale) {                 /* an earlier run's link still holds the pad */
-            cmd_status(s, op, 0x0B);    /* connection already exists */
+            if (s->pad.stale_in_complete) {
+                cmd_status(s, op, 0);
+                conn_failed(s, 0x0B);
+            } else {
+                cmd_status(s, op, 0x0B);    /* connection already exists */
+            }
             break;
         }
         cmd_status(s, op, 0);
-        if (memcmp(p, s->pad.addr, 6) == 0) conn_complete(s);
+        if (memcmp(p, s->pad.addr, 6) != 0) break;
+        if (s->pad.no_answer ||
+            (s->pad.page_window_ms && g_clock - s->t_inq_resp > s->pad.page_window_ms)) {
+            conn_failed(s, 0x04);       /* page timeout */
+        } else if (s->calling_until) {
+            conn_failed(s, 0x0B);       /* its own call to us is pending */
+        } else {
+            conn_complete(s);
+        }
         break;
     case 0x0409:        /* Accept Connection Request */
+        if (s->stale && s->pad.stale_in_complete) {
+            cmd_status(s, op, 0x0C);    /* command disallowed: nothing to accept */
+            break;
+        }
+        if (s->pad.pages_host && !s->calling_until) {
+            cmd_status(s, op, 0x02);    /* no such call pending */
+            break;
+        }
         cmd_status(s, op, 0);
+        s->calling_until = 0;
         conn_complete(s);
         /* A pad reconnecting by itself authenticates itself. */
         ev_addr(s, 0x17);
@@ -533,6 +596,19 @@ static void pad_step(sim_t *s)
     rchan *all[3];
     int i;
 
+    /* A pad that remembers the host keeps calling it while in pairing mode;
+     * an unanswered call times out on the controller. */
+    if (s->pad.pages_host && s->pad.mode == SIM_WAIT_PAIRING && !s->connected) {
+        if (s->calling_until && g_clock >= s->calling_until) {
+            s->calling_until = 0;
+            conn_failed(s, 0x10);       /* connection accept timeout */
+        } else if (!s->calling_until && g_clock >= s->next_call) {
+            s->calling_until = g_clock + 5000;
+            s->next_call = g_clock + 8000;
+            if (!s->pad.call_unheard) sim_power_on(s);
+        }
+    }
+
     if (!s->connected || !s->enc) return;
 
     /* L2CAP's retransmission timer: an unanswered request is sent again. */
@@ -565,6 +641,11 @@ static int op_pump(void *ctx, int timeout_ms)
 
     g_clock += timeout_ms > 0 ? timeout_ms : 1;
     if (s->deaf) return 0;
+    if (s->inq_end && g_clock >= s->inq_end) {     /* Inquiry Complete */
+        unsigned char st = 0;
+        s->inq_end = 0;
+        event(s, 0x01, &st, 1);
+    }
     pad_step(s);
     return s->ev.count || s->acl.count;
 }
@@ -696,3 +777,6 @@ int sim_last_output(const sim_t *s, unsigned char *out, int max)
     memcpy(out, s->last_out, (size_t)n);
     return n;
 }
+
+int sim_name_requests(const sim_t *s) { return s->name_reqs; }
+int sim_pages(const sim_t *s) { return s->pages; }

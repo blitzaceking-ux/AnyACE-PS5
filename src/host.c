@@ -150,6 +150,7 @@ void db_save(host_t *h)
         memcpy(r + 31, d->rand, 8);
         memcpy(r + 39, d->irk, 16);
         r[55] = d->has_irk;
+        memcpy(r + 64, d->name, HOST_FOUND_NAME);
         fwrite(r, 1, sizeof r, f);
     }
     ok = fflush(f) == 0 && !ferror(f);
@@ -165,15 +166,24 @@ static void db_load(host_t *h)
     FILE *f = fopen(h->db_path, "rb");
     unsigned char r[DB_REC];
 
+    size_t rec;
+
     h->ndb = 0;
     if (!f) return;
-    if (fread(r, 1, 8, f) != 8 || memcmp(r, DB_MAGIC, 8) != 0) {
-        log_line("store: %s is not a AnyPad PS5 store, ignored", h->db_path);
+    if (fread(r, 1, 8, f) != 8) {
         fclose(f);
         return;
     }
-    while (h->ndb < DB_MAX && fread(r, 1, sizeof r, f) == sizeof r) {
+    if (memcmp(r, DB_MAGIC, 8) == 0) rec = DB_REC;
+    else if (memcmp(r, DB_MAGIC_02, 8) == 0) rec = DB_REC_02;      /* before names */
+    else {
+        log_line("store: %s is not an AnyACE store, ignored", h->db_path);
+        fclose(f);
+        return;
+    }
+    while (h->ndb < DB_MAX && fread(r, 1, rec, f) == rec) {
         db_rec *d = &h->db[h->ndb++];
+        memset(d, 0, sizeof *d);
         memcpy(d->addr, r, 6);
         memcpy(d->key, r + 6, 16);
         d->type = r[22];
@@ -185,9 +195,13 @@ static void db_load(host_t *h)
         memcpy(d->rand, r + 31, 8);
         memcpy(d->irk, r + 39, 16);
         d->has_irk = r[55];
+        if (rec == DB_REC) {
+            memcpy(d->name, r + 64, HOST_FOUND_NAME);
+            d->name[HOST_FOUND_NAME] = '\0';
+        }
     }
     fclose(f);
-    log_line("store: %d paired pad(s)", h->ndb);
+    log_line("store: %d paired pad(s)%s", h->ndb, rec == DB_REC_02 ? " (old format, no names)" : "");
 }
 
 db_rec *db_put(host_t *h, const unsigned char *addr)
@@ -203,6 +217,21 @@ db_rec *db_put(host_t *h, const unsigned char *addr)
     memset(d, 0, sizeof *d);
     memcpy(d->addr, addr, 6);
     return d;
+}
+
+db_rec *db_put_link(host_t *h, const unsigned char *addr, const link_t *l)
+{
+    db_rec *d = db_put(h, addr);
+
+    if (!d->name[0] && l && l->name[0]) snprintf(d->name, sizeof d->name, "%s", l->name);
+    return d;
+}
+
+void link_set_name(host_t *h, const unsigned char *addr, const char *name)
+{
+    link_t *l = link_by_addr(h, addr);
+
+    if (l && name && name[0]) snprintf(l->name, sizeof l->name, "%s", name);
 }
 
 void db_forget(host_t *h, const unsigned char *addr)
@@ -643,7 +672,7 @@ static void sdp_finish(host_t *h, link_t *l, int ok)
     if (query == SDP_Q_IDS) {
         uint16_t vid = 0, pid = 0;
         if (ok && sdp_find_ids(l->sdp_buf, l->sdp_len, &vid, &pid)) {
-            db_rec *r = db_put(h, l->addr);
+            db_rec *r = db_put_link(h, l->addr, l);
             r->vid = vid;
             r->pid = pid;
             db_save(h);
@@ -741,7 +770,20 @@ static void on_hid(host_t *h, link_t *l, const chan *c, const unsigned char *d, 
 {
     if (len < 1) return;
     if (c == &l->ctrl) {
-        if (d[0] == HID_CONTROL_UNPLUG) link_disconnect(h, l, "virtual cable unplugged");
+        if (d[0] == HID_CONTROL_UNPLUG) {
+            link_disconnect(h, l, "virtual cable unplugged");
+            return;
+        }
+        if (d[0] == HID_DATA_INPUT && len >= 2) {       /* some pads report here */
+            if (l->n_logged < 3)
+                log_line("pad %s: input report %#04x on the control channel", addr_str(l->addr), d[1]);
+            link_input(h, l, d + 1, len - 1);
+            return;
+        }
+        if (l->n_logged < 6) {
+            l->n_logged++;
+            log_line("pad %s: control channel: %#04x (%d bytes)", addr_str(l->addr), d[0], len);
+        }
         return;                         /* handshakes and feature data unused */
     }
     if (d[0] != HID_DATA_INPUT || len < 2) return;
@@ -755,7 +797,28 @@ void link_input(host_t *h, link_t *l, const unsigned char *rep, int len)
 
     if (!l->prof || len < 1) return;
     r = l->prof->parse(l->pctx.bytes, rep, len, &l->st);
+    if (r != PARSE_NONE) {
+        l->last_rid = rep[0];
+        l->n_reports++;
+    } else {
+        l->rid_other = rep[0];
+        l->n_other++;
+        if (l->n_logged < 6) {          /* the first few, in full: what is the pad saying? */
+            char hex[3 * 24 + 1];
+            int i, m = len < 24 ? len : 24;
+            for (i = 0; i < m; i++) snprintf(hex + 3 * i, 4, "%02x ", rep[i]);
+            hex[3 * m] = '\0';
+            l->n_logged++;
+            log_line("pad %s: report %#04x (%d bytes) not taken by the %s profile: %s%s",
+                     addr_str(l->addr), rep[0], len, l->prof->name, hex, len > 24 ? "..." : "");
+        }
+    }
     if (r == PARSE_FULL) l->full = 1;
+    if (l->le && l->le_s.batt_state >= 2 && l->le_s.batt_state != 9 && l->le_s.batt_pct >= 0 &&
+        !l->st.has_battery) {
+        l->st.has_battery = 1;          /* from the Battery Service, not the report */
+        l->st.battery_pct = (uint8_t)l->le_s.batt_pct;
+    }
     if (r != PARSE_NONE && l->ready && h->ev.on_state)
         h->ev.on_state(h->ev.ud, slot_of(h, l), &l->st);
 }
@@ -765,6 +828,10 @@ void link_ready(host_t *h, link_t *l)
     pad_info info;
 
     l->ready = 1;
+    if (memcmp(l->addr, h->pick_addr, 6) == 0 && h->pick_state != HOST_PICK_NONE) {
+        h->pick_want = 0;                                               /* the pick is done */
+        h->pick_state = HOST_PICK_DONE;
+    }
     memset(&info, 0, sizeof info);
     info.vid = l->vid;
     info.pid = l->pid;
@@ -889,22 +956,278 @@ static void pair_with(host_t *h, const unsigned char *rec)
     put16(p + 10, le16(rec + 11) | 0x8000);   /* clock offset, valid */
     p[12] = 1;                          /* allow role switch */
     send_cmd(h, OP_CREATE_CONNECTION, p, 13);
-    log_line("pad %s: connecting to pair", addr_str(rec));
+    log_line("pad %s: connecting to pair (page scan R%u, clock offset %#06x)",
+             addr_str(rec), rec[6], le16(rec + 11));
+}
+
+/* ---- devices a pairing search found ---------------------------------------
+ *
+ * A search only lists what it finds; the user picks on the web page. Inquiry
+ * cannot tell a DualSense (the console's own pad, in pairing mode or not)
+ * from a DualShock 4: both are class 0x002508. Before a picked Classic pad
+ * is paged its name is known (from its extended inquiry response, or asked
+ * between inquiries), and a DualSense, or anything the console's own driver
+ * holds a link to, is refused unless the user insists. */
+
+static found_t *found_find(host_t *h, const unsigned char *addr, int le)
+{
+    long now = now_ms();
+    int i;
+
+    for (i = 0; i < FOUND_MAX; i++) {
+        found_t *f = &h->found[i];
+        if (f->used && f->le == le && memcmp(f->addr, addr, 6) == 0 &&
+            now - f->t_seen <= FOUND_TTL) return f;
+    }
+    return NULL;
+}
+
+found_t *found_find_le(host_t *h, const unsigned char *addr)
+{
+    return found_find(h, addr, 1);
+}
+
+found_t *found_add(host_t *h, const unsigned char *addr, int le, uint8_t addr_type, int rssi)
+{
+    found_t *f = found_find(h, addr, le), *slot = NULL;
+    long now = now_ms();
+    int i;
+
+    if (!f) {
+        for (i = 0; i < FOUND_MAX && !slot; i++)
+            if (!h->found[i].used || now - h->found[i].t_seen > FOUND_TTL) slot = &h->found[i];
+        for (i = 0; i < FOUND_MAX && !slot; i++)        /* full: the oldest goes */
+            if (!slot || h->found[i].t_seen < slot->t_seen) slot = &h->found[i];
+        if (!slot) slot = &h->found[0];
+        f = slot;
+        memset(f, 0, sizeof *f);
+        f->used = 1;
+        memcpy(f->addr, addr, 6);
+        f->le = le;
+    }
+    f->addr_type = addr_type;
+    f->rssi = rssi;
+    f->t_seen = now;
+    return f;
+}
+
+/* Names come from the air: printable ASCII only, so the page shows them safely. */
+static void found_set_name(found_t *f, const unsigned char *s, int n)
+{
+    int i, k = 0;
+
+    for (i = 0; i < n && s[i] && k < HOST_FOUND_NAME; i++)
+        f->name[k++] = s[i] >= 0x20 && s[i] < 0x7F ? (char)s[i] : '?';
+    f->name[k] = '\0';
+    f->name_state = k ? NAME_KNOWN : NAME_FAILED;
+}
+
+/* The local name in extended inquiry response or advertising data. */
+void found_name_from_ad(found_t *f, const unsigned char *d, int n)
+{
+    int i = 0;
+
+    while (i + 1 < n) {
+        int len = d[i];
+        if (len == 0 || i + 1 + len > n) break;
+        if (len > 1 && (d[i + 1] == 0x09 || (d[i + 1] == 0x08 && f->name_state != NAME_KNOWN)))
+            found_set_name(f, d + i + 2, len - 1);
+        i += 1 + len;
+    }
+}
+
+static int name_is_dualsense(const char *name)
+{
+    char low[HOST_FOUND_NAME + 1];
+    int i;
+
+    for (i = 0; name[i] && i < HOST_FOUND_NAME; i++)
+        low[i] = name[i] >= 'A' && name[i] <= 'Z' ? (char)(name[i] | 0x20) : name[i];
+    low[i] = '\0';
+    return strstr(low, "dualsense") != NULL;
+}
+
+static int sys_index(const host_t *h, const unsigned char *addr);
+
+static int is_system_addr(const host_t *h, const unsigned char *addr)
+{
+    return sys_index(h, addr) >= 0;
+}
+
+static int found_block(const host_t *h, const found_t *f)
+{
+    if (is_system_addr(h, f->addr)) return HOST_BLOCK_CONSOLE;
+    if (f->name_state == NAME_KNOWN && name_is_dualsense(f->name)) return HOST_BLOCK_DUALSENSE;
+    return HOST_OK;
+}
+
+/* A link on this controller that is not ours was made by the console's own
+ * driver: a DualSense (or other pad) the console uses. Never offer it
+ * without a warning. Only a link that really came up counts: a pad that
+ * merely pages the console may be one that remembers this console from an
+ * earlier pairing, waiting for us to answer. */
+static int sys_index(const host_t *h, const unsigned char *addr)
+{
+    int i;
+
+    for (i = 0; i < h->nsys && i < SYS_MAX; i++)
+        if (memcmp(h->sys_addr[i], addr, 6) == 0) return i;
+    return -1;
+}
+
+static void note_system_link(host_t *h, const unsigned char *addr, unsigned handle)
+{
+    int i = sys_index(h, addr);
+
+    if (db_find(h, addr)) return;
+    if (memcmp(addr, h->pick_addr, 6) == 0 && now_ms() - h->pick_at < T_PICK_GRACE) return;
+    if (i < 0) {
+        i = h->nsys % SYS_MAX;
+        memcpy(h->sys_addr[i], addr, 6);
+        if (h->nsys < SYS_MAX) h->nsys++;
+        log_line("console link %s: the console uses it, it will not be offered for pairing without a warning",
+                 addr_str(addr));
+    }
+    h->sys_handle[i] = (int)handle;
+}
+
+/* A pick keeps the search going, so the pad can be seen (and paged) again. */
+static void pick_extend(host_t *h)
+{
+    long until = now_ms() + T_PICK_EXTEND;
+
+    if (h->pair_until < until) h->pair_until = until;
+}
+
+/* The user's pick failed for good: tell the page, stop trying. */
+static void pick_give_up(host_t *h, int why)
+{
+    h->pick_want = 0;
+    h->pick_wait = 0;
+    h->pick_state = HOST_PICK_FAILED;
+    if (why) h->pick_why = why;
+    if (!h->pick_why) h->pick_why = HOST_WHY_FAILED;
+    log_line("pairing: gave up on %s after %d tries", addr_str(h->pick_addr), h->pick_tries);
+}
+
+/* A try at the picked pad failed (it may still be tried again). */
+void pick_failed_try(host_t *h, const unsigned char *addr, int why)
+{
+    if (memcmp(addr, h->pick_addr, 6) != 0 || h->pick_state != HOST_PICK_PAIRING) return;
+    h->pick_why = why;
+    if (h->pick_tries >= PICK_TRIES || now_ms() >= h->pair_until) pick_give_up(h, why);
+}
+
+static void ask_name(host_t *h, found_t *f)
+{
+    unsigned char p[10];
+
+    memcpy(p, f->addr, 6);
+    p[6] = f->rec[6];                   /* page scan repetition mode */
+    p[7] = 0;
+    put16(p + 8, le16(f->rec + 11) | 0x8000);
+    if (send_cmd(h, OP_REMOTE_NAME_REQ, p, 10)) {
+        f->name_state = NAME_ASKED;
+        f->t_name = now_ms();
+        h->name_asking = 1;
+    } else {
+        f->name_state = NAME_FAILED;
+    }
+}
+
+static void name_done(host_t *h, const unsigned char *addr, int status,
+                      const unsigned char *name, int n)
+{
+    int i;
+
+    for (i = 0; i < FOUND_MAX; i++) {
+        found_t *f = &h->found[i];
+        if (!f->used || f->le || (addr && memcmp(f->addr, addr, 6) != 0)) continue;
+        if (!addr && f->name_state != NAME_ASKED) continue;
+        if (f->name_state == NAME_ASKED) h->name_asking = 0;
+        if (status == 0 && name) found_set_name(f, name, n);
+        else if (f->name_state != NAME_KNOWN) f->name_state = NAME_FAILED;
+        if (f->name_state == NAME_KNOWN)
+            log_line("found %s is named \"%s\"", addr_str(f->addr), f->name);
+    }
+}
+
+/* The user's pick stays wanted through the pairing window: a pairing that
+ * failed (a stale link, lost packets) is tried again when the pad is seen
+ * again, as before the pick existed. Only that pad. */
+int pick_wanted(const host_t *h, const unsigned char *addr)
+{
+    return h->pick_want && now_ms() < h->pair_until && memcmp(addr, h->pick_addr, 6) == 0;
+}
+
+/* Paces and counts the tries at the picked pad, Classic or LE: not two
+ * within T_PICK_RETRY, at most PICK_TRIES, the search kept alive meanwhile.
+ * Returns 1 if a try may start now. */
+int pick_try_begin(host_t *h, const unsigned char *addr)
+{
+    if (!pick_wanted(h, addr)) return 0;
+    if (now_ms() - h->pick_try_at < T_PICK_RETRY) return 0;
+    if (h->pick_tries >= PICK_TRIES || h->pick_total >= PICK_TRIES_TOTAL) {
+        pick_give_up(h, 0);
+        return 0;
+    }
+    h->pick_tries++;
+    h->pick_total++;
+    h->pick_try_at = now_ms();
+    pick_extend(h);
+    return 1;
+}
+
+/* The picked pad's link came up: the chip is not refusing it, so the count
+ * of connection tries starts over (what follows, pairing, has its own
+ * retries), and the next try, if one is needed, need not wait. */
+void pick_connected(host_t *h, const unsigned char *addr)
+{
+    if (h->pick_state != HOST_PICK_PAIRING || memcmp(addr, h->pick_addr, 6) != 0) return;
+    h->pick_tries = 0;
+    h->pick_try_at = 0;
 }
 
 /* An inquiry record: addr 6, page scan mode 1, reserved 1, class 3,
  * clock offset 2, RSSI 1. */
-static void on_found(host_t *h, const unsigned char *rec)
+static found_t *on_found(host_t *h, const unsigned char *rec)
 {
     uint32_t cod = (uint32_t)rec[8] | (uint32_t)rec[9] << 8 | (uint32_t)rec[10] << 16;
+    found_t *f;
 
-    if (now_ms() >= h->pair_until) return;
+    if (now_ms() >= h->pair_until) return NULL;
     if (!profile_class_is_gamepad(cod)) {
         log_line("inquiry: %s class %06x is not a gamepad, ignored", addr_str(rec), (unsigned)cod);
-        return;
+        return NULL;
     }
-    log_line("found gamepad %s (class %06x)", addr_str(rec), (unsigned)cod);
-    pair_with(h, rec);
+    if (link_by_addr(h, rec)) return NULL;          /* being paired already */
+    if (!found_find(h, rec, 0))
+        log_line("found gamepad %s (class %06x)%s", addr_str(rec), (unsigned)cod,
+                 is_system_addr(h, rec) ? ", used by the console" : "");
+    f = found_add(h, rec, 0, 0, (signed char)rec[13]);
+    memcpy(f->rec, rec, 14);
+    f->cod = cod;
+    if (pick_wanted(h, rec) && (h->pick_force || !found_block(h, f))) {
+        memcpy(h->pick_rec, rec, 14);
+        if (now_ms() - h->pick_try_at < T_PICK_RETRY) {     /* not so soon */
+            f->used = 0;
+            return NULL;
+        }
+        if (h->pick_tries >= PICK_TRIES) {
+            pick_give_up(h, 0);
+            return f;
+        }
+        h->pick_tries++;
+        h->pick_try_at = now_ms();
+        pick_extend(h);
+        log_line("pairing: the picked pad %s answered the search, paging it now (try %d of %d)",
+                 addr_str(rec), h->pick_tries, PICK_TRIES);
+        pair_with(h, rec);
+        link_set_name(h, rec, f->name[0] ? f->name : h->pick_name);
+        if (link_by_addr(h, rec)) f->used = 0;
+        return NULL;
+    }
+    return f;
 }
 
 /* "Connection already exists" while paging a pad means this controller still
@@ -914,7 +1237,7 @@ static void on_found(host_t *h, const unsigned char *rec)
  * the chip is reset. Handles are small numbers: ask to close each; the
  * controller answers "unknown handle" to all but the real ones. Once a
  * minute at most. */
-static void purge_stale_links(host_t *h)
+void purge_stale_links(host_t *h)
 {
     unsigned char p[3];
     unsigned handle;
@@ -959,14 +1282,36 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
         for (i = 0; i < ev[2] && 3 + (i + 1) * 14 <= len; i++) on_found(h, ev + 3 + i * 14);
         break;
 
-    case 0x2F:  /* Extended Inquiry Result */
-        if (len >= 17) on_found(h, ev + 3);
+    case 0x2F:  /* Extended Inquiry Result: one record, then its EIR data */
+        if (len >= 17) {
+            found_t *f = on_found(h, ev + 3);
+            if (f && len > 17) found_name_from_ad(f, ev + 17, len - 17);
+        }
+        break;
+
+    case 0x07:  /* Remote Name Request Complete: status, addr, name */
+        if (len >= 9) name_done(h, ev + 3, ev[2], ev + 9, len - 9);
         break;
 
     case 0x04:  /* Connection Request: addr, class, link type */
         if (len < 12 || ev[11] != 1) break;
         {
             db_rec *r = db_find(h, ev + 2);
+            int picked = !r && pick_wanted(h, ev + 2) && !link_by_addr(h, ev + 2);
+            if (picked) {
+                /* The pad the user picked is calling the console by itself
+                 * (it remembers this console's address): answer it and pair
+                 * over its link, rather than paging it at the same time. */
+                l = link_new(h, ev + 2);
+                if (!l) break;
+                l->pairing = 1;
+                snprintf(l->name, sizeof l->name, "%s", h->pick_name);
+                memcpy(p, ev + 2, 6);
+                p[6] = 0x00;
+                send_cmd(h, OP_ACCEPT_CONNECTION, p, 7);
+                log_line("pad %s: the picked pad is calling, answering it to pair", addr_str(ev + 2));
+                break;
+            }
             if (!r || r->le || link_by_addr(h, ev + 2)) break;      /* not ours */
         }
         l = link_new(h, ev + 2);
@@ -982,19 +1327,61 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
         break;
 
     case 0x03:  /* Connection Complete: status, handle, addr, type, enc */
+        if (len >= 13 && ev[2] == 0 && ev[11] == 1 && !link_by_addr(h, ev + 5))
+            note_system_link(h, ev + 5, le16(ev + 3) & 0x0FFF);
         if (len < 13 || !(l = link_by_addr(h, ev + 5)) || l->connected) break;
         if (ev[2] != 0) {
-            log_line("pad %s: connection failed (status %#04x)", addr_str(l->addr), ev[2]);
+            unsigned char a[6];
+            int k = sys_index(h, ev + 5);
+            memcpy(a, l->addr, 6);
+            log_line("pad %s: connection failed (status %#04x)", addr_str(a), ev[2]);
             link_free(h, l);
+            if (ev[2] == 0x0B && h->pick_force && k >= 0 && h->sys_handle[k] >= 0 &&
+                pick_wanted(h, a)) {
+                /* Confirmed by the user: take the pad from the console's
+                 * driver. Only that one link; paged again once it is down. */
+                unsigned char d[3];
+                put16(d, (unsigned)h->sys_handle[k]);
+                d[2] = 0x13;
+                send_cmd(h, OP_DISCONNECT, d, 3);
+                log_line("pad %s: the console's driver holds it; taking it over as confirmed", addr_str(a));
+            } else if (ev[2] == 0x0B && pick_wanted(h, a) && (l = link_new(h, a))) {
+                /* The pad may be calling the console with nobody answering
+                 * (its call can reach the console's driver, not us): answer
+                 * it. If there is no such call the controller says so. */
+                unsigned char c[7];
+                l->pairing = 1;
+                snprintf(l->name, sizeof l->name, "%s", h->pick_name);
+                memcpy(c, a, 6);
+                c[6] = 0x00;
+                send_cmd(h, OP_ACCEPT_CONNECTION, c, 7);
+                log_line("pad %s: answering a call from it we may not have heard", addr_str(a));
+            }
+            pick_failed_try(h, a, ev[2] == 0x0B ? HOST_WHY_COLLISION :
+                                  ev[2] == 0x04 ? HOST_WHY_NO_ANSWER : HOST_WHY_FAILED);
             break;
         }
         l->connected = 1;
         l->handle = le16(ev + 3) & 0x0FFF;
         l->t_conn = now_ms();
         log_line("pad %s: connected, handle %#05x", addr_str(l->addr), l->handle);
+        pick_connected(h, l->addr);
         break;
 
     case 0x05:  /* Disconnection Complete: status, handle, reason */
+        if (len >= 6 && ev[2] == 0 && !link_by_handle(h, le16(ev + 3))) {
+            for (i = 0; i < h->nsys && i < SYS_MAX; i++) {
+                if (h->sys_handle[i] != (int)(le16(ev + 3) & 0x0FFF)) continue;
+                h->sys_handle[i] = -1;
+                if (pick_wanted(h, h->sys_addr[i]) && h->pick_force && !link_by_addr(h, h->sys_addr[i])) {
+                    h->pick_tries++;
+                    h->pick_try_at = now_ms();
+                    log_line("pad %s: free now, paging it", addr_str(h->sys_addr[i]));
+                    pair_with(h, h->pick_rec);
+                    link_set_name(h, h->sys_addr[i], h->pick_name);
+                }
+            }
+        }
         if (len < 6 || !(l = link_by_handle(h, le16(ev + 3)))) break;
         log_line("pad %s: disconnected (reason %#04x)", addr_str(l->addr), ev[5]);
         link_free(h, l);
@@ -1046,16 +1433,39 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
             if (ev[2] != 0) h->inquiring = 0;
         }
         if (len < 6 || ev[2] == 0) break;
+        if (le16(ev + 4) == OP_REMOTE_NAME_REQ) name_done(h, NULL, ev[2], NULL, 0);
+        if (le16(ev + 4) == OP_ACCEPT_CONNECTION && (l = link_by_addr(h, h->pick_addr)) &&
+            !l->connected && l->pairing) {
+            log_line("pad %s: no call to answer (status %#04x)", addr_str(l->addr), ev[2]);
+            link_free(h, l);
+            /* Paging it said "connection already exists" and there is no
+             * call pending: this controller holds a link to the pad that
+             * nobody owns (an earlier run, or a call of the pad's that the
+             * controller took in without us hearing of it). Close it, as
+             * for any stale link, so the next page can get through. */
+            if (pick_wanted(h, h->pick_addr)) purge_stale_links(h);
+            break;
+        }
         if (le16(ev + 4) == OP_CREATE_CONNECTION && ev[2] == 0x0B) purge_stale_links(h);
         if (le16(ev + 4) == OP_CREATE_CONNECTION || le16(ev + 4) == 0x200D) {
             int want_le = le16(ev + 4) == 0x200D;
             for (i = 0; i < HOST_MAX_PADS; i++) {
+                unsigned char a[6];
                 l = &h->links[i];
-                if (l->used && !l->connected && l->le == want_le &&
-                    (l->pairing || want_le)) {
-                    log_line("pad %s: connection refused (status %#04x)", addr_str(l->addr), ev[2]);
-                    link_free(h, l);
+                if (!(l->used && !l->connected && l->le == want_le && (l->pairing || want_le))) continue;
+                memcpy(a, l->addr, 6);
+                log_line("pad %s: connection refused (status %#04x)", addr_str(a), ev[2]);
+                link_free(h, l);
+                if (want_le && ev[2] == 0x0C) {
+                    /* "Command disallowed": the controller is still busy
+                     * with an earlier attempt (ours, cut short) or holds
+                     * a link it never told us about. Cancel the one, and
+                     * on a repeat close the other, before trying again. */
+                    send_cmd(h, OP_LE_CREATE_CONN_CANCEL_OP, NULL, 0);
+                    log_line("le pad %s: cancelling whatever connection attempt the controller still has", addr_str(a));
+                    if (pick_wanted(h, a) && h->pick_tries >= 2) purge_stale_links(h);
                 }
+                pick_failed_try(h, a, ev[2] == 0x0C ? HOST_WHY_REFUSED : HOST_WHY_FAILED);
             }
         } else if (le16(ev + 4) == OP_AUTH_REQUESTED) {
             /* Usually a collision with the pad's own authentication:
@@ -1104,7 +1514,7 @@ static void on_event(host_t *h, const unsigned char *ev, int len)
     case 0x18:  /* Link Key Notification: addr, key, type */
         if (len < 25 || !(l = link_by_addr(h, ev + 2))) break;
         {
-            db_rec *r = db_put(h, ev + 2);
+            db_rec *r = db_put_link(h, ev + 2, l);
             memcpy(r->key, ev + 8, 16);
             r->type = ev[24];
             db_save(h);
@@ -1145,7 +1555,12 @@ static void link_step(host_t *h, link_t *l, long now)
         return;
     }
     if (!l->connected) {
-        if (now - l->t_create > T_CONN_TIMEOUT) link_disconnect(h, l, "no connection");
+        if (now - l->t_create > T_CONN_TIMEOUT) {
+            unsigned char a[6];
+            memcpy(a, l->addr, 6);
+            link_disconnect(h, l, "no connection");
+            pick_failed_try(h, a, HOST_WHY_NO_ANSWER);
+        }
         return;
     }
     if (l->disconnecting) return;
@@ -1258,6 +1673,66 @@ static void start_inquiry(host_t *h)
     }
 }
 
+static int start_pick(host_t *h, found_t *f, int forced);
+static void start_inquiry(host_t *h);
+
+/* Names of found pads, one request at a time, and a pick waiting for one. */
+static void names_and_pick(host_t *h, long now, int linking)
+{
+    found_t *f;
+    int i;
+
+    /* The search ended with the pick still unpaired. */
+    if (h->pick_state == HOST_PICK_PAIRING && h->pick_want && now >= h->pair_until &&
+        !link_by_addr(h, h->pick_addr)) pick_give_up(h, 0);
+
+    for (i = 0; i < FOUND_MAX; i++) {
+        f = &h->found[i];
+        if (f->used && f->name_state == NAME_ASKED && now - f->t_name > T_NAME_WAIT) {
+            log_line("found %s: no answer to the name request", addr_str(f->addr));
+            f->name_state = NAME_FAILED;
+            h->name_asking = 0;
+        }
+    }
+
+    if (h->pick_wait) {
+        f = found_find(h, h->pick_addr, 0);
+        if (!f) {
+            log_line("pairing: the picked pad %s is gone", addr_str(h->pick_addr));
+            h->pick_wait = 0;
+        } else if (h->name_asking) {
+            /* wait for the answer */
+        } else if (f->name_state == NAME_NONE && !h->pick_force) {
+            if (h->inquiring) {
+                send_cmd(h, OP_INQUIRY_CANCEL, NULL, 0);
+                h->inquiring = 0;
+            }
+            ask_name(h, f);
+        } else {
+            h->pick_wait = 0;
+            if (found_block(h, f) && !h->pick_force) {
+                log_line("pairing: %s is named \"%s\", not paired; confirm on the page to pair it anyway",
+                         addr_str(f->addr), f->name);
+                h->pick_state = HOST_PICK_FAILED;
+                h->pick_why = HOST_WHY_DUALSENSE;
+                snprintf(h->pick_name, sizeof h->pick_name, "%s", f->name);
+            } else {
+                start_pick(h, f, h->pick_force);
+            }
+        }
+        return;
+    }
+
+    if (h->name_asking || h->inquiring || linking || now >= h->pair_until) return;
+    for (i = 0; i < FOUND_MAX; i++) {
+        f = &h->found[i];
+        if (f->used && !f->le && f->name_state == NAME_NONE && now - f->t_seen <= FOUND_TTL) {
+            ask_name(h, f);
+            return;
+        }
+    }
+}
+
 void host_poll(host_t *h, int timeout_ms)
 {
     long now;
@@ -1290,8 +1765,15 @@ void host_poll(host_t *h, int timeout_ms)
         h->probes = 0;
     }
 
-    /* Keep searching through the pairing window, one pad at a time. */
-    if (now < h->pair_until && !h->inquiring && !linking) start_inquiry(h);
+    names_and_pick(h, now, linking);
+    for (i = 0; i < HOST_MAX_PADS; i++)        /* a pick may have started one */
+        if (h->links[i].used && h->links[i].pairing && !h->links[i].ready &&
+            !h->links[i].le) linking = 1;
+
+    /* Keep searching through the pairing window, one pad at a time; names
+     * are asked between inquiries, since asking during one disturbs it. */
+    if (now < h->pair_until && !h->inquiring && !linking && !h->name_asking && !h->pick_wait)
+        start_inquiry(h);
     if (now >= h->pair_until && h->inquiring) {
         send_cmd(h, OP_INQUIRY_CANCEL, NULL, 0);
         h->inquiring = 0;
@@ -1301,8 +1783,144 @@ void host_poll(host_t *h, int timeout_ms)
 int host_pair(host_t *h, int seconds)
 {
     h->pair_until = now_ms() + (long)seconds * 1000;
-    log_line("pairing: searching for %d s", seconds);
+    memset(h->found, 0, sizeof h->found);
+    h->pick_wait = h->pick_want = 0;
+    h->pick_state = HOST_PICK_NONE;
+    h->pick_why = HOST_WHY_NONE;
+    log_line("pairing: searching for %d s; pick the pad on the web page", seconds);
     return 1;
+}
+
+int host_pick_get(const host_t *h, host_pick_info *out)
+{
+    if (h->pick_state == HOST_PICK_NONE) return 0;
+    memset(out, 0, sizeof *out);
+    memcpy(out->addr, h->pick_addr, 6);
+    memcpy(out->name, h->pick_name, sizeof out->name);
+    out->state = h->pick_state;
+    out->why = h->pick_why;
+    out->tries = h->pick_tries;
+    return 1;
+}
+
+int host_found_get(const host_t *h, int i, host_found_info *out)
+{
+    long now = now_ms();
+    int k;
+
+    for (k = 0; k < FOUND_MAX; k++) {
+        const found_t *f = &h->found[k];
+        if (!f->used || now - f->t_seen > FOUND_TTL) continue;
+        if (i-- > 0) continue;
+        memset(out, 0, sizeof *out);
+        memcpy(out->addr, f->addr, 6);
+        out->le = f->le;
+        out->cod = f->cod;
+        out->rssi = f->rssi;
+        memcpy(out->name, f->name, sizeof out->name);
+        out->name_pending = !f->le && (f->name_state == NAME_NONE || f->name_state == NAME_ASKED);
+        out->block = found_block(h, f);
+        out->paired = db_find((host_t *)h, f->addr) != NULL;
+        return 1;
+    }
+    return 0;
+}
+
+static int has_free_slot(const host_t *h)
+{
+    int i;
+
+    for (i = 0; i < HOST_MAX_PADS; i++) if (!h->links[i].used) return 1;
+    return 0;
+}
+
+/* Pages (or for LE, connects to) a picked device. */
+static int start_pick(host_t *h, found_t *f, int forced)
+{
+    unsigned char addr[6];
+    int ok;
+
+    memcpy(addr, f->addr, 6);
+    memcpy(h->pick_addr, addr, 6);
+    h->pick_at = now_ms();
+    if (!f->le && now_ms() - f->t_seen > T_PICK_FRESH) {
+        /* Seen a while ago: its clock offset is stale and some pads only
+         * take a page right after answering a search. Page it the moment
+         * it answers the next one (on_found), as 0.5.5 did. */
+        log_line("pairing: picked %s \"%s\"%s; seen %ld s ago, paging it when it next answers the search",
+                 addr_str(addr), f->name, forced ? " (confirmed past the warning)" : "",
+                 (now_ms() - f->t_seen) / 1000);
+        memcpy(h->pick_rec, f->rec, 14);
+        snprintf(h->pick_name, sizeof h->pick_name, "%s", f->name);
+        f->used = 0;
+        h->pick_want = 1;
+        h->pick_force = forced;
+        h->pick_state = HOST_PICK_PAIRING;
+        h->pick_why = HOST_WHY_NONE;
+        h->pick_tries = 0;
+        h->pick_total = 0;
+        h->pick_try_at = 0;
+        pick_extend(h);
+        if (!h->inquiring && !h->name_asking) start_inquiry(h);
+        return HOST_PAIR_STARTED;
+    }
+    if (f->le) {
+        ok = le_pair(h, f->addr_type, addr);
+    } else {
+        pair_with(h, f->rec);
+        ok = link_by_addr(h, addr) != NULL;
+    }
+    link_set_name(h, addr, f->name);
+    if (!ok) {
+        log_line("pairing: %s could not be started now", addr_str(addr));
+        return HOST_PAIR_BUSY;
+    }
+    log_line("pairing: picked %s \"%s\"%s", addr_str(addr), f->name,
+             forced ? " (confirmed past the warning)" : "");
+    if (!f->le) memcpy(h->pick_rec, f->rec, 14);
+    snprintf(h->pick_name, sizeof h->pick_name, "%s", f->name);
+    f->used = 0;
+    h->pick_want = 1;
+    h->pick_force = forced;
+    h->pick_state = HOST_PICK_PAIRING;
+    h->pick_why = HOST_WHY_NONE;
+    h->pick_tries = 1;
+    h->pick_total = 1;
+    h->pick_try_at = now_ms();
+    pick_extend(h);
+    (void)forced;
+    return HOST_PAIR_STARTED;
+}
+
+int host_pair_addr(host_t *h, const unsigned char addr[6], int force)
+{
+    found_t *f = found_find(h, addr, 0);
+
+    if (!f) f = found_find(h, addr, 1);
+    if (!f) return HOST_PAIR_UNKNOWN;
+    if (found_block(h, f) && !force) {
+        log_line("pairing: %s not paired, it looks like the console's own DualSense", addr_str(addr));
+        return HOST_PAIR_BLOCKED;
+    }
+    if (link_by_addr(h, addr) || !has_free_slot(h) || h->pick_wait) return HOST_PAIR_BUSY;
+
+    /* A Classic pad is paged once its name is known (or could not be
+     * known) and no name request is out: see names_and_pick(). */
+    if (!f->le && (h->name_asking || (!force && (f->name_state == NAME_NONE ||
+                                                 f->name_state == NAME_ASKED)))) {
+        memcpy(h->pick_addr, addr, 6);
+        h->pick_at = now_ms();
+        h->pick_wait = 1;
+        h->pick_force = force;
+        h->pick_state = HOST_PICK_CHECKING;
+        h->pick_why = HOST_WHY_NONE;
+        h->pick_tries = 0;
+        h->pick_total = 0;
+        snprintf(h->pick_name, sizeof h->pick_name, "%s", f->name);
+        log_line("pairing: picked %s, checking its name first", addr_str(addr));
+        return HOST_PAIR_STARTED;
+    }
+    return start_pick(h, f, force);
 }
 
 int host_set_output(host_t *h, int slot, const pad_output *out)
@@ -1313,6 +1931,18 @@ int host_set_output(host_t *h, int slot, const pad_output *out)
     l = &h->links[slot];
     if (!l->used || !l->ready) return 0;
     l->out = *out;
+    return send_output(h, l);
+}
+
+int host_rumble(host_t *h, int slot, uint8_t strong, uint8_t weak)
+{
+    link_t *l;
+
+    if (slot < 0 || slot >= HOST_MAX_PADS) return 0;
+    l = &h->links[slot];
+    if (!l->used || !l->ready) return 0;
+    l->out.strong = strong;
+    l->out.weak = weak;
     return send_output(h, l);
 }
 
@@ -1352,6 +1982,7 @@ int host_paired_get(const host_t *h, int i, host_paired_info *out)
     out->vid = d->vid;
     out->pid = d->pid;
     out->le = d->le;
+    memcpy(out->name, d->name, sizeof out->name);
     for (k = 0; k < HOST_MAX_PADS; k++) {
         const link_t *l = &h->links[k];
         if (l->used && l->ready && memcmp(link_identity(l), d->addr, 6) == 0) out->connected = 1;
@@ -1371,7 +2002,37 @@ int host_pad_get(const host_t *h, int slot, pad_info *info, pad_state *st)
     info->pid = l->pid;
     info->profile = l->prof ? l->prof->name : "";
     memcpy(info->addr, link_identity(l), 6);
+    {
+        const db_rec *d = db_find((host_t *)h, link_identity(l));
+        snprintf(info->name, sizeof info->name, "%s", l->name[0] ? l->name : d ? d->name : "");
+    }
     *st = l->st;
+    return 1;
+}
+
+int host_disconnect(host_t *h, int slot)
+{
+    link_t *l;
+
+    if (slot < 0 || slot >= HOST_MAX_PADS) return 0;
+    l = &h->links[slot];
+    if (!l->used || !l->connected || l->disconnecting) return 0;
+    link_disconnect(h, l, "disconnected from the menu");
+    return 1;
+}
+
+int host_pad_stats(const host_t *h, int slot, long *reports, int *last_rid,
+                   long *other, int *rid_other)
+{
+    const link_t *l;
+
+    if (slot < 0 || slot >= HOST_MAX_PADS) return 0;
+    l = &h->links[slot];
+    if (!l->used || !l->ready) return 0;
+    *reports = l->n_reports;
+    *last_rid = l->last_rid;
+    *other = l->n_other;
+    *rid_other = l->rid_other;
     return 1;
 }
 
@@ -1380,6 +2041,7 @@ int host_forget(host_t *h, const unsigned char addr[6])
     int k;
 
     if (!db_find(h, addr)) return 0;
+    if (memcmp(addr, h->pick_addr, 6) == 0) h->pick_want = 0;
     for (k = 0; k < HOST_MAX_PADS; k++) {
         link_t *l = &h->links[k];
         if (l->used && memcmp(link_identity(l), addr, 6) == 0)

@@ -27,6 +27,8 @@ int main(void)
     pad.mode = SIM_WAIT_PAIRING;
     memcpy(pad.addr, addr, 6);
     pad.cod = 0x002508;
+    strcpy(pad.name, "Wireless Controller");
+    pad.name_in_eir = 1;
     pad.vid = 0x054C;
     pad.pid = 0x05C4;
     memset(pad.report, 0, 78);

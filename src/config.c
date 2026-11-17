@@ -9,12 +9,12 @@
 static const struct { const char *key; const char *shown; uint32_t bit; } k_buttons[] = {
     { "l1", "L1", PAD_L1 }, { "r1", "R1", PAD_R1 }, { "l2", "L2", PAD_L2 }, { "r2", "R2", PAD_R2 },
     { "l3", "L3", PAD_L3 }, { "r3", "R3", PAD_R3 },
-    { "cross", "cruz", PAD_CROSS }, { "circle", "círculo", PAD_CIRCLE },
-    { "square", "cuadrado", PAD_SQUARE }, { "triangle", "triángulo", PAD_TRIANGLE },
-    { "up", "arriba", PAD_UP }, { "down", "abajo", PAD_DOWN },
-    { "left", "izquierda", PAD_LEFT }, { "right", "derecha", PAD_RIGHT },
+    { "cross", "cross", PAD_CROSS }, { "circle", "circle", PAD_CIRCLE },
+    { "square", "square", PAD_SQUARE }, { "triangle", "triangle", PAD_TRIANGLE },
+    { "up", "up", PAD_UP }, { "down", "down", PAD_DOWN },
+    { "left", "left", PAD_LEFT }, { "right", "right", PAD_RIGHT },
     { "options", "OPTIONS", PAD_OPTIONS }, { "create", "CREATE", PAD_CREATE },
-    { "touchpad", "panel táctil", PAD_TOUCHPAD },
+    { "touchpad", "touchpad", PAD_TOUCHPAD },
 };
 #define N_BUTTONS (sizeof k_buttons / sizeof k_buttons[0])
 

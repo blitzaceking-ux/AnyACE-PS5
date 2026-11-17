@@ -9,7 +9,7 @@
 #include <stddef.h>
 
 #define LAUNCHER_TITLE_ID   "ANYP00001"
-#define LAUNCHER_TITLE_NAME "AnyPad"
+#define LAUNCHER_TITLE_NAME "AnyACE"
 #define LAUNCHER_URL        "http://127.0.0.1:8095/"
 #define LAUNCHER_APP_ROOT   "/user/app"
 

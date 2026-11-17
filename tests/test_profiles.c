@@ -206,6 +206,66 @@ static void test_switch(void)
         if (step == 3) CHECK(out[10] == 0x30 && out[11] == 0x02);       /* player 2 LED */
     }
     CHECK(step == 4);
+
+    /* Rumble: neutral when off, the known maximum encoding when full. */
+    {
+        pad_output off = { 0, 0, 0, 0, 0, 1 }, on = { 255, 0, 0, 0, 0, 1 };
+        memset(ctx, 0, sizeof ctx);
+        n = p->build_output(ctx, &off, out, sizeof out);
+        CHECK(n == 10 && out[0] == 0x10 && out[2] == 0x00 && out[3] == 0x01 && out[4] == 0x40 && out[5] == 0x40);
+        CHECK(memcmp(out + 2, out + 6, 4) == 0);
+        n = p->build_output(ctx, &on, out, sizeof out);
+        CHECK(n == 10 && out[1] == 1 && out[2] == 0x80 && out[3] == 0xC8 && out[4] == 0x40 && out[5] == 0x72);
+    }
+
+    /* Four rounds ask for the full report; a pad that never gives it is
+     * put back into the simple one on the fifth, and nothing else is sent. */
+    {
+        int round, k = 0;
+        memset(ctx, 0, sizeof ctx);
+        for (round = 1; round <= 4; round++)
+            for (step = 0; (n = p->init_report(ctx, step, &o, out, sizeof out)) > 0; step++) {
+                if (step == 0) CHECK(out[10] == 0x03 && out[11] == 0x30);
+                k++;
+            }
+        CHECK(k == 16);
+        n = p->init_report(ctx, 0, &o, out, sizeof out);
+        CHECK(n == 12 && out[10] == 0x03 && out[11] == 0x3F);           /* simple report mode */
+        CHECK(p->init_report(ctx, 1, &o, out, sizeof out) == 0);
+    }
+}
+
+static void test_ds3(void)
+{
+    const pad_profile *p = profile_find(0x054C, 0x0268);
+    unsigned char ctx[PROFILE_CTX_MAX], r[49], out[64];
+    pad_state st;
+    pad_output o = { 180, 1, 0, 0, 0, 3 };
+    int n;
+
+    printf("DualShock 3 over USB: report and output\n");
+    CHECK(p && strcmp(p->name, "DualShock 3") == 0);
+    if (!p) return;
+    memset(r, 0, sizeof r);
+    r[0] = 0x01;
+    r[2] = 0x01 | 0x10;                 /* select, up */
+    r[3] = 0x40 | 0x04 | 0x02;          /* cross, L1, R2 */
+    r[4] = 0x01;                        /* PS */
+    r[6] = 0x80; r[7] = 0x00; r[8] = 0xFF; r[9] = 0x80;
+    r[18] = 0; r[19] = 220;
+    r[30] = 0x03;
+    pad_state_reset(&st);
+    CHECK(p->parse(ctx, r, 49, &st) == PARSE_OK);
+    CHECK(st.buttons == (PAD_CREATE | PAD_UP | PAD_CROSS | PAD_L1 | PAD_R2 | PAD_PS));
+    CHECK(st.lx == 0x80 && st.ly == 0 && st.rx == 0xFF && st.ry == 0x80 && st.r2 == 220);
+    CHECK(st.has_battery && st.battery_pct == 60 && !st.charging);
+    r[30] = 0xEE;
+    CHECK(p->parse(ctx, r, 49, &st) == PARSE_OK && st.charging && st.battery_pct == 100);
+    r[0] = 0x02;
+    CHECK(p->parse(ctx, r, 49, &st) == PARSE_NONE);
+
+    n = p->build_output(ctx, &o, out, sizeof out);
+    CHECK(n == 36 && out[0] == 0x01 && out[3] == 1 && out[5] == 180 && out[10] == 0x08);   /* player 3 */
 }
 
 /* A typical Bluetooth gamepad descriptor: report 1 with X, Y, Z, Rz
@@ -305,6 +365,7 @@ int main(void)
     test_ds5();
     test_xbox();
     test_switch();
+    test_ds3();
     test_generic();
     printf(g_fail ? "%d check(s) failed\n" : "all profile checks passed\n", g_fail);
     return g_fail != 0;

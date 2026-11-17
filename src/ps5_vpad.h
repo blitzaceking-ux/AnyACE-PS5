@@ -22,6 +22,9 @@
 
 #include "pad.h"
 
+/* Pad slots: HOST_MAX_PADS Bluetooth ones, then GIP_MAX_PADS wired ones. */
+#define VPAD_MAX_SLOTS 8
+
 /* Raises this process's credentials (checked), loads MBus and libScePad.
  * Returns 0 if any step fails; virtual pads then stay off. */
 int  vpad_init(void);
@@ -33,6 +36,33 @@ void vpad_poll(long now);
 int  vpad_live(int slot);
 
 void vpad_update(int slot, const pad_state *st);
+
+/* What the slot's virtual pad is doing, for the page: "" (none), "creating",
+ * "ready", or why not ("no user signed in", "not identified", "refused"). */
+const char *vpad_status(int slot);
+
+/* Binds the slot's virtual pad to a user again (the menu's Retry button):
+ * on a pad the console did not take, tries now; on one that failed outright,
+ * removes it and makes it again. Returns 1 if bound now, 2 if being made
+ * again, 0 if there is nothing to retry. */
+int  vpad_rebind(int slot);
+
+/* An experiment, opted into from the menu: for `seconds`, keeps asking the
+ * system for the slot's "remote setting" (the undocumented call Remote Play
+ * is thought to use to learn what a game asks of a remote pad: rumble,
+ * lights) and logs what comes back. Returns 0 if the call is not on this
+ * firmware or the slot has no live virtual pad. */
+int  vpad_probe_start(int slot, int seconds);
+/* What the probe found so far, for the page: "" when never run. */
+const char *vpad_probe_status(int slot);
+
+/* Removes the slot's virtual pad and makes it again (after the user it is
+ * given to was changed). Returns 1 if there was one. */
+int  vpad_reassign(int slot);
+
+/* The console's signed-in users, for the page. Returns how many. */
+typedef struct { int32_t id; char name[32]; int initial; } vpad_user;
+int  vpad_users(vpad_user *out, int max);
 
 /* Holds PS on the virtual pad for `ms` milliseconds (the menu's PS button).
  * 0 if the slot has no live virtual pad. */
